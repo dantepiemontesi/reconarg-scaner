@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ReconARG · Escáner de seguridad</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8f9fa; color: #1a1a1a; min-height: 100vh; }
+  .container { max-width: 700px; margin: 0 auto; padding: 2rem 1rem; }
+  .header { margin-bottom: 2rem; }
+  .logo { font-size: 22px; font-weight: 600; color: #1a1a1a; }
+  .logo span { color: #1D9E75; }
+  .tagline { font-size: 14px; color: #666; margin-top: 4px; }
+  .search-box { display: flex; gap: 8px; margin-bottom: 6px; }
+  .search-box input { flex: 1; height: 46px; padding: 0 16px; font-size: 15px; border: 1.5px solid #ddd; border-radius: 10px; background: #fff; color: #1a1a1a; outline: none; transition: border 0.2s; }
+  .search-box input:focus { border-color: #1D9E75; }
+  .search-box button { height: 46px; padding: 0 24px; background: #1D9E75; color: #fff; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+  .search-box button:hover { background: #178a65; }
+  .search-box button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .demo-hint { font-size: 12px; color: #999; margin-bottom: 1.5rem; }
+  .demo-hint a { color: #1D9E75; cursor: pointer; text-decoration: none; margin-right: 10px; }
+  .demo-hint a:hover { text-decoration: underline; }
+  .progress-wrap { display: none; margin-bottom: 1.5rem; }
+  .progress-label { font-size: 13px; color: #666; margin-bottom: 6px; }
+  .progress-bg { height: 6px; background: #e9ecef; border-radius: 3px; overflow: hidden; }
+  .progress-bar { height: 6px; background: #1D9E75; border-radius: 3px; width: 0%; transition: width 0.5s ease; }
+  .score-grid { display: none; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 1.25rem; }
+  .score-card { background: #fff; border-radius: 10px; padding: 14px 16px; border: 1px solid #eee; }
+  .sc-label { font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .sc-val { font-size: 24px; font-weight: 600; }
+  .sc-sub { font-size: 12px; color: #666; margin-top: 2px; }
+  .section { background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 10px; display: none; }
+  .section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .section-title { font-size: 14px; font-weight: 600; flex: 1; }
+  .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+  .badge-ok { background: #e1f5ee; color: #0F6E56; }
+  .badge-warn { background: #faeeda; color: #854F0B; }
+  .badge-bad { background: #fcebeb; color: #A32D2D; }
+  .badge-info { background: #e6f1fb; color: #185FA5; }
+  .row { display: flex; justify-content: space-between; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; gap: 12px; }
+  .row:last-child { border-bottom: none; }
+  .row-key { color: #666; }
+  .row-val { font-weight: 500; text-align: right; word-break: break-word; max-width: 60%; }
+  .val-ok { color: #0F6E56; }
+  .val-bad { color: #A32D2D; }
+  .val-warn { color: #854F0B; }
+  .port-list { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; }
+  .port-pill { font-size: 12px; padding: 3px 10px; border-radius: 20px; font-weight: 500; }
+  .port-danger { background: #fcebeb; color: #A32D2D; }
+  .port-ok { background: #e1f5ee; color: #0F6E56; }
+  .breach-item { padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+  .breach-item:last-child { border-bottom: none; }
+  .breach-name { font-weight: 500; }
+  .breach-count { font-size: 12px; color: #666; margin-top: 2px; }
+  .sub-list { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; }
+  .sub-pill { font-size: 12px; padding: 3px 10px; border-radius: 20px; background: #f0f0f0; color: #444; }
+  .empty { font-size: 13px; color: #999; padding: 4px 0; }
+  .cta { display: none; margin-top: 1.5rem; background: #e1f5ee; border-radius: 12px; padding: 1.25rem; }
+  .cta-title { font-size: 15px; font-weight: 600; color: #0F6E56; margin-bottom: 6px; }
+  .cta-body { font-size: 13px; color: #085041; line-height: 1.6; }
+  .error-banner { display: none; background: #fcebeb; color: #A32D2D; padding: 10px 14px; border-radius: 10px; font-size: 13px; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="logo">Recon<span>ARG</span> · Escáner de seguridad</div>
+    <div class="tagline">Analizamos la seguridad de tu empresa en minutos, en castellano</div>
+  </div>
+
+  <div class="search-box">
+    <input type="text" id="domain-input" placeholder="ejemplo.com.ar" onkeydown="if(event.key==='Enter') startScan()" />
+    <button id="scan-btn" onclick="startScan()">Escanear</button>
+  </div>
+  <div class="demo-hint">
+    Probá con:
+    <a onclick="setDemo('mercadolibre.com.ar')">mercadolibre.com.ar</a>
+    <a onclick="setDemo('galicia.com.ar')">galicia.com.ar</a>
+    <a onclick="setDemo('clarin.com')">clarin.com</a>
+  </div>
+
+  <div class="error-banner" id="error-banner"></div>
+
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-label" id="progress-label">Iniciando escaneo...</div>
+    <div class="progress-bg"><div class="progress-bar" id="progress-bar"></div></div>
+  </div>
+
+  <div class="score-grid" id="score-grid">
+    <div class="score-card">
+      <div class="sc-label">Puntuación</div>
+      <div class="sc-val" id="sc-score">—</div>
+      <div class="sc-sub" id="sc-risk">de 100</div>
+    </div>
+    <div class="score-card">
+      <div class="sc-label">SSL</div>
+      <div class="sc-val" id="sc-ssl">—</div>
+      <div class="sc-sub" id="sc-ssl-sub">—</div>
+    </div>
+    <div class="score-card">
+      <div class="sc-label">Email</div>
+      <div class="sc-val" id="sc-email">—</div>
+      <div class="sc-sub" id="sc-email-sub">protección</div>
+    </div>
+    <div class="score-card">
+      <div class="sc-label">Puertos</div>
+      <div class="sc-val" id="sc-ports">—</div>
+      <div class="sc-sub">expuestos</div>
+    </div>
+  </div>
+
+  <div class="section" id="sec-ssl">
+    <div class="section-header">
+      <i class="ti ti-lock" style="font-size:18px;color:#1D9E75;"></i>
+      <span class="section-title">Certificado SSL</span>
+      <span class="badge" id="badge-ssl">—</span>
+    </div>
+    <div class="row"><span class="row-key">Estado</span><span class="row-val" id="val-ssl-status">—</span></div>
+    <div class="row"><span class="row-key">Emisor</span><span class="row-val" id="val-ssl-issuer">—</span></div>
+    <div class="row"><span class="row-key">Vence</span><span class="row-val" id="val-ssl-expires">—</span></div>
+    <div class="row"><span class="row-key">Días restantes</span><span class="row-val" id="val-ssl-days">—</span></div>
+  </div>
+
+  <div class="section" id="sec-dns">
+    <div class="section-header">
+      <i class="ti ti-mail" style="font-size:18px;color:#185FA5;"></i>
+      <span class="section-title">Protección de correo</span>
+      <span class="badge" id="badge-dns">—</span>
+    </div>
+    <div class="row"><span class="row-key">SPF</span><span class="row-val" id="val-spf">—</span></div>
+    <div class="row"><span class="row-key">DMARC</span><span class="row-val" id="val-dmarc">—</span></div>
+    <div class="row"><span class="row-key">Servidor de mail</span><span class="row-val" id="val-mx">—</span></div>
+  </div>
+
+  <div class="section" id="sec-ports">
+    <div class="section-header">
+      <i class="ti ti-server" style="font-size:18px;color:#BA7517;"></i>
+      <span class="section-title">Puertos expuestos</span>
+      <span class="badge" id="badge-ports">—</span>
+    </div>
+    <div id="ports-content"><div class="empty">Analizando...</div></div>
+  </div>
+
+  <div class="section" id="sec-subs">
+    <div class="section-header">
+      <i class="ti ti-topology-star" style="font-size:18px;color:#7F77DD;"></i>
+      <span class="section-title">Subdominios encontrados</span>
+      <span class="badge" id="badge-subs">—</span>
+    </div>
+    <div id="subs-content"><div class="empty">Buscando...</div></div>
+  </div>
+
+  <div class="section" id="sec-breach">
+    <div class="section-header">
+      <i class="ti ti-alert-triangle" style="font-size:18px;color:#A32D2D;"></i>
+      <span class="section-title">Filtraciones en la dark web</span>
+      <span class="badge" id="badge-breach">—</span>
+    </div>
+    <div id="breach-content"><div class="empty">Consultando...</div></div>
+  </div>
+
+  <div class="cta" id="cta">
+    <div class="cta-title">¿Querés proteger tu empresa?</div>
+    <div class="cta-body">ReconARG monitorea tu infraestructura todos los días y te avisa antes de que te hackeen.<br><strong>Desde USD 44/mes para una PyME típica.</strong> Sin letra chica, sin chino técnico.</div>
+  </div>
+
+</div>
+
+<script>
+  const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:3000'
+    : '';
+
+  function setDemo(d) { document.getElementById('domain-input').value = d; startScan(); }
+
+  function showError(msg) {
+    const el = document.getElementById('error-banner');
+    el.textContent = msg; el.style.display = 'block';
+  }
+  function hideError() { document.getElementById('error-banner').style.display = 'none'; }
+
+  function setProgress(pct, label) {
+    document.getElementById('progress-bar').style.width = pct + '%';
+    document.getElementById('progress-label').textContent = label;
+  }
+
+  function setBadge(id, cls, txt) {
+    const el = document.getElementById('badge-' + id);
+    el.className = 'badge badge-' + cls;
+    el.textContent = txt;
+  }
+
+  const DANGEROUS = [21, 23, 3389, 1433, 3306, 5432, 6379, 27017, 5900, 445, 139];
+
+  function riskScore(data) {
+    let s = 100;
+    if (!data.ssl || !data.ssl.valid) s -= 25;
+    else if (data.ssl.days_remaining < 30) s -= 10;
+    if (!data.dns.spf) s -= 15;
+    if (!data.dns.dmarc) s -= 15;
+    if (data.ports.status === 'ok') {
+      const danger = data.ports.ports.filter(p => DANGEROUS.includes(p.port));
+      s -= Math.min(danger.length * 10, 25);
+    }
+    if (data.breaches.status === 'ok') s -= Math.min(data.breaches.breaches.length * 5, 20);
+    return Math.max(0, s);
+  }
+
+  function riskColor(score) {
+    if (score >= 80) return '#0F6E56';
+    if (score >= 55) return '#854F0B';
+    return '#A32D2D';
+  }
+
+  async function startScan() {
+    hideError();
+    const raw = document.getElementById('domain-input').value.trim();
+    if (!raw) { showError('Ingresá un dominio para escanear.'); return; }
+    const domain = raw.replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase().trim();
+    if (!domain.includes('.')) { showError('El dominio no parece válido. Ejemplo: empresa.com.ar'); return; }
+
+    document.getElementById('scan-btn').disabled = true;
+    document.getElementById('progress-wrap').style.display = 'block';
+    document.getElementById('score-grid').style.display = 'none';
+    ['ssl','dns','ports','subs','breach'].forEach(s => document.getElementById('sec-' + s).style.display = 'none');
+    document.getElementById('cta').style.display = 'none';
+
+    setProgress(15, 'Verificando SSL y DNS...');
+    let data;
+    try {
+      const r = await fetch(`${API_BASE}/api/scan?domain=${encodeURIComponent(domain)}`);
+      setProgress(70, 'Escaneando puertos y filtraciones...');
+      if (!r.ok) throw new Error('El servidor respondió con error ' + r.status);
+      data = await r.json();
+    } catch(e) {
+      document.getElementById('progress-wrap').style.display = 'none';
+      document.getElementById('scan-btn').disabled = false;
+      showError('No se pudo conectar con el servidor. ¿Está desplegado en Vercel? Error: ' + e.message);
+      return;
+    }
+
+    setProgress(100, 'Análisis completo.');
+    setTimeout(() => {
+      document.getElementById('progress-wrap').style.display = 'none';
+      render(data);
+      document.getElementById('scan-btn').disabled = false;
+    }, 300);
+  }
+
+  function render(data) {
+    // SSL
+    const ssl = data.ssl;
+    if (ssl) {
+      const cls = !ssl.valid ? 'bad' : ssl.days_remaining < 30 ? 'warn' : 'ok';
+      const txt = !ssl.valid ? 'Inválido / vencido' : ssl.days_remaining < 30 ? 'Próximo a vencer' : 'Válido';
+      setBadge('ssl', cls, txt);
+      document.getElementById('val-ssl-status').textContent = txt;
+      document.getElementById('val-ssl-status').className = 'row-val val-' + cls;
+      document.getElementById('val-ssl-issuer').textContent = ssl.issuer || '—';
+      document.getElementById('val-ssl-expires').textContent = ssl.expires || '—';
+      document.getElementById('val-ssl-days').textContent = ssl.days_remaining != null ? ssl.days_remaining + ' días' : '—';
+      document.getElementById('val-ssl-days').className = 'row-val ' + (ssl.days_remaining < 30 ? 'val-warn' : 'val-ok');
+    } else {
+      setBadge('ssl', 'warn', 'No verificado');
+      document.getElementById('val-ssl-status').textContent = 'No se pudo verificar';
+    }
+    document.getElementById('sec-ssl').style.display = 'block';
+
+    // DNS
+    const dns = data.dns;
+    const dnsScore = (dns.spf ? 1 : 0) + (dns.dmarc ? 1 : 0);
+    setBadge('dns', dnsScore === 2 ? 'ok' : dnsScore === 1 ? 'warn' : 'bad',
+      dnsScore === 2 ? 'Protegido' : dnsScore === 1 ? 'Parcial' : 'Sin protección');
+    document.getElementById('val-spf').textContent = dns.spf ? 'Configurado ✓' : 'No configurado ✗';
+    document.getElementById('val-spf').className = 'row-val ' + (dns.spf ? 'val-ok' : 'val-bad');
+    document.getElementById('val-dmarc').textContent = dns.dmarc ? 'Configurado ✓' : 'No configurado ✗';
+    document.getElementById('val-dmarc').className = 'row-val ' + (dns.dmarc ? 'val-ok' : 'val-bad');
+    document.getElementById('val-mx').textContent = dns.mx || 'No encontrado';
+    document.getElementById('sec-dns').style.display = 'block';
+
+    // Ports
+    const ports = data.ports;
+    const pc = document.getElementById('ports-content');
+    if (ports.status === 'limit') {
+      setBadge('ports', 'warn', 'Límite de consultas');
+      pc.innerHTML = '<div class="empty">HackerTarget alcanzó el límite gratuito por hora. Intentá en unos minutos.</div>';
+    } else if (ports.ports.length === 0) {
+      setBadge('ports', 'ok', 'Sin puertos peligrosos');
+      pc.innerHTML = '<div class="empty">No se detectaron puertos peligrosos expuestos.</div>';
+    } else {
+      const hasDanger = ports.ports.some(p => DANGEROUS.includes(p.port));
+      setBadge('ports', hasDanger ? 'bad' : 'warn', hasDanger ? 'Peligrosos detectados' : 'Abiertos');
+      const list = document.createElement('div'); list.className = 'port-list';
+      for (const p of ports.ports) {
+        const pill = document.createElement('span');
+        pill.className = 'port-pill ' + (DANGEROUS.includes(p.port) ? 'port-danger' : 'port-ok');
+        pill.textContent = `${p.port} ${p.service}`;
+        pill.title = DANGEROUS.includes(p.port) ? '⚠ Puerto de alto riesgo' : 'Puerto abierto';
+        list.appendChild(pill);
+      }
+      pc.innerHTML = '';
+      pc.appendChild(list);
+      if (hasDanger) {
+        const note = document.createElement('p');
+        note.style.cssText = 'font-size:12px;color:#A32D2D;margin-top:8px;';
+        note.textContent = 'Los puertos en rojo representan alto riesgo y deberían cerrarse.';
+        pc.appendChild(note);
+      }
+    }
+    document.getElementById('sec-ports').style.display = 'block';
+
+    // Subdomains
+    const subs = data.subdomains || [];
+    const sc = document.getElementById('subs-content');
+    setBadge('subs', subs.length > 0 ? 'warn' : 'ok', subs.length > 0 ? subs.length + ' encontrados' : 'Ninguno');
+    if (subs.length === 0) {
+      sc.innerHTML = '<div class="empty">No se encontraron subdominios expuestos.</div>';
+    } else {
+      const list = document.createElement('div'); list.className = 'sub-list';
+      for (const s of subs) {
+        const pill = document.createElement('span');
+        pill.className = 'sub-pill'; pill.textContent = s;
+        list.appendChild(pill);
+      }
+      sc.innerHTML = ''; sc.appendChild(list);
+    }
+    document.getElementById('sec-subs').style.display = 'block';
+
+    // Breaches
+    const br = data.breaches;
+    const bc = document.getElementById('breach-content');
+    if (br.status === 'no-key') {
+      setBadge('breach', 'info', 'API key requerida');
+      bc.innerHTML = '<div class="empty">Filtraciones requieren clave de HaveIBeenPwned (USD 3.95/mes). Subdominios y puertos ya aportan valor para la demo.</div>';
+    } else if (br.breaches.length === 0) {
+      setBadge('breach', 'ok', 'Sin filtraciones');
+      bc.innerHTML = '<div class="empty">No se encontraron filtraciones públicas para este dominio.</div>';
+    } else {
+      setBadge('breach', 'bad', br.breaches.length + ' filtraciones');
+      let html = '';
+      for (const b of br.breaches.slice(0, 8)) {
+        const name = typeof b === 'string' ? b : (b.Name || b.name || JSON.stringify(b));
+        html += `<div class="breach-item"><div class="breach-name">${name}</div><div class="breach-count">Credenciales del dominio expuestas en esta filtración.</div></div>`;
+      }
+      bc.innerHTML = html;
+    }
+    document.getElementById('sec-breach').style.display = 'block';
+
+    // Score
+    const score = riskScore(data);
+    const color = riskColor(score);
+    document.getElementById('sc-score').textContent = score;
+    document.getElementById('sc-score').style.color = color;
+    document.getElementById('sc-risk').textContent = score >= 80 ? 'Bajo riesgo' : score >= 55 ? 'Riesgo medio' : 'Riesgo alto';
+    document.getElementById('sc-risk').style.color = color;
+    document.getElementById('sc-ssl').textContent = ssl && ssl.valid ? '✓' : '✗';
+    document.getElementById('sc-ssl').style.color = ssl && ssl.valid ? '#0F6E56' : '#A32D2D';
+    document.getElementById('sc-ssl-sub').textContent = ssl ? (ssl.valid ? 'Válido' : 'Inválido') : 'No verificado';
+    document.getElementById('sc-email').textContent = dnsScore + '/2';
+    document.getElementById('sc-email').style.color = dnsScore === 2 ? '#0F6E56' : dnsScore === 1 ? '#854F0B' : '#A32D2D';
+    const portCount = ports.status === 'ok' ? ports.ports.length : '—';
+    document.getElementById('sc-ports').textContent = portCount;
+    document.getElementById('sc-ports').style.color = portCount === 0 ? '#0F6E56' : '#A32D2D';
+
+    document.getElementById('score-grid').style.display = 'grid';
+    document.getElementById('cta').style.display = 'block';
+  }
+</script>
+</body>
+</html>
