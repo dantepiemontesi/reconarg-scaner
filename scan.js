@@ -3,14 +3,11 @@ const dns = require('dns').promises;
 const tls = require('tls');
 
 function fetchJSON(url) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     https.get(url, { headers: { 'User-Agent': 'ReconARG-Scanner/1.0' } }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch(e) { resolve(null); }
-      });
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { resolve(null); } });
     }).on('error', () => resolve(null));
   });
 }
@@ -50,17 +47,16 @@ function checkSSL(domain) {
 }
 
 async function checkDNS(domain) {
-  const result = { spf: false, dmarc: false, mx: null, spf_record: null, dmarc_record: null };
+  const result = { spf: false, dmarc: false, mx: null };
   try {
     const txtRecords = await dns.resolveTxt(domain).catch(() => []);
     for (const recs of txtRecords) {
       const joined = recs.join('');
-      if (joined.startsWith('v=spf')) { result.spf = true; result.spf_record = joined.substring(0, 80); }
+      if (joined.startsWith('v=spf')) result.spf = true;
     }
     const dmarcRecs = await dns.resolveTxt(`_dmarc.${domain}`).catch(() => []);
     for (const recs of dmarcRecs) {
-      const joined = recs.join('');
-      if (joined.includes('v=DMARC')) { result.dmarc = true; result.dmarc_record = joined.substring(0, 80); }
+      if (recs.join('').includes('v=DMARC')) result.dmarc = true;
     }
     const mxRecs = await dns.resolveMx(domain).catch(() => []);
     if (mxRecs.length > 0) {
@@ -105,7 +101,7 @@ async function checkSubdomains(domain) {
   return Array.from(subs).slice(0, 15);
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -123,11 +119,9 @@ export default async function handler(req, res) {
       checkPorts(clean),
       checkSubdomains(clean)
     ]);
-
     const breachData = await checkBreaches(clean);
-
     res.status(200).json({ domain: clean, ssl, dns: dnsData, ports: portsData, breaches: breachData, subdomains });
   } catch(e) {
     res.status(500).json({ error: 'Error interno', detail: e.message });
   }
-}
+};
