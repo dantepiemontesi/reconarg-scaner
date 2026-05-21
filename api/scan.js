@@ -1,127 +1,119 @@
-const https = require('https');
+const net = require('net');
 const dns = require('dns').promises;
-const tls = require('tls');
 
-function fetchJSON(url) {
-  return new Promise((resolve) => {
-    https.get(url, { headers: { 'User-Agent': 'ReconARG-Scanner/1.0' } }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { resolve(null); } });
-    }).on('error', () => resolve(null));
-  });
+const COMMON_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 1433, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 27017];
+
+const PORT_NAMES = {
+    21: 'FTP',
+    22: 'SSH',
+    23: 'Telnet',
+    25: 'SMTP',
+    53: 'DNS',
+    80: 'HTTP',
+    110: 'POP3',
+    143: 'IMAP',
+    443: 'HTTPS',
+    445: 'SMB',
+    1433: 'MSSQL',
+    3306: 'MySQL',
+    3389: 'RDP',
+    5432: 'PostgreSQL',
+    5900: 'VNC',
+    6379: 'Redis',
+    8080: 'HTTP-Alt',
+    8443: 'HTTPS-Alt',
+    27017: 'MongoDB',
+};
+
+function scanPort(host, port, timeout = 3000) {
+    return new Promise((resolve) => {
+          const socket = new net.Socket();
+          let status = 'closed';
+
+                           socket.setTimeout(timeout);
+
+                           socket.on('connect', () => {
+                                   status = 'open';
+                                   socket.destroy();
+                           });
+
+                           socket.on('timeout', () => {
+                                   status = 'filtered';
+                                   socket.destroy();
+                           });
+
+                           socket.on('error', (err) => {
+                                   if (err.code === 'ECONNREFUSED') {
+                                             status = 'closed';
+                                   } else {
+                                             status = 'filtered';
+                                   }
+                                   socket.destroy();
+                           });
+
+                           socket.on('close', () => {
+                                   resolve({
+                                             port,
+                                             name: PORT_NAMES[port] || 'unknown',
+                                             status,
+                                   });
+                           });
+
+                           socket.connect(port, host);
+    });
 }
 
-function fetchText(url) {
-  return new Promise((resolve) => {
-    https.get(url, { headers: { 'User-Agent': 'ReconARG-Scanner/1.0' } }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(data));
-    }).on('error', () => resolve(null));
-  });
-}
+module.exports = async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-function checkSSL(domain) {
-  return new Promise((resolve) => {
+    if (req.method === 'OPTIONS') {
+          return res.status(200).end();
+    }
+
+    const { target } = req.query;
+
+    if (!target) {
+          return res.status(400).json({ error: 'Missing target parameter' });
+    }
+
+    // Sanitize target: strip protocol if present
+    const cleanTarget = target.replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim();
+
+    if (!cleanTarget) {
+          return res.status(400).json({ error: 'Invalid target' });
+    }
+
+    let ip;
     try {
-      const socket = tls.connect(443, domain, { servername: domain, rejectUnauthorized: false }, () => {
-        const cert = socket.getPeerCertificate();
-        socket.destroy();
-        if (!cert || !cert.valid_to) return resolve(null);
-        const expires = new Date(cert.valid_to);
-        const now = new Date();
-        const days = Math.floor((expires - now) / (1000 * 60 * 60 * 24));
-        resolve({
-          valid: days > 0,
-          days_remaining: days,
-          expires: expires.toLocaleDateString('es-AR'),
-          issuer: cert.issuer ? (cert.issuer.O || cert.issuer.CN || '—') : '—',
-          subject: cert.subject ? cert.subject.CN : domain
-        });
+          const lookup = await dns.lookup(cleanTarget);
+          ip = lookup.address;
+    } catch (err) {
+          return res.status(400).json({ error: `Could not resolve domain: ${cleanTarget}` });
+    }
+
+    try {
+          const results = await Promise.all(
+                  COMMON_PORTS.map((port) => scanPort(ip, port))
+                );
+
+      const open = results.filter((r) => r.status === 'open');
+          const closed = results.filter((r) => r.status === 'closed');
+          const filtered = results.filter((r) => r.status === 'filtered');
+
+      return res.status(200).json({
+              target: cleanTarget,
+              ip,
+              scanned: COMMON_PORTS.length,
+              open: open.length,
+              results: {
+                        open,
+                        closed,
+                        filtered,
+              },
       });
-      socket.on('error', () => resolve(null));
-      setTimeout(() => { socket.destroy(); resolve(null); }, 8000);
-    } catch(e) { resolve(null); }
-  });
-}
-
-async function checkDNS(domain) {
-  const result = { spf: false, dmarc: false, mx: null };
-  try {
-    const txtRecords = await dns.resolveTxt(domain).catch(() => []);
-    for (const recs of txtRecords) {
-      const joined = recs.join('');
-      if (joined.startsWith('v=spf')) result.spf = true;
+    } catch (err) {
+          return res.status(500).json({ error: 'Scan failed', details: err.message });
     }
-    const dmarcRecs = await dns.resolveTxt(`_dmarc.${domain}`).catch(() => []);
-    for (const recs of dmarcRecs) {
-      if (recs.join('').includes('v=DMARC')) result.dmarc = true;
-    }
-    const mxRecs = await dns.resolveMx(domain).catch(() => []);
-    if (mxRecs.length > 0) {
-      mxRecs.sort((a, b) => a.priority - b.priority);
-      result.mx = mxRecs[0].exchange;
-    }
-  } catch(e) {}
-  return result;
-}
-
-async function checkPorts(domain) {
-  const text = await fetchText(`https://api.hackertarget.com/nmap/?q=${encodeURIComponent(domain)}`);
-  if (!text || text.includes('API count') || text.includes('Upgrade') || text.includes('error')) {
-    return { status: 'limit', ports: [] };
-  }
-  const ports = [];
-  for (const line of text.split('\n')) {
-    const m = line.match(/(\d+)\/(tcp|udp)\s+(\w+)\s+(.*)/);
-    if (m) ports.push({ port: parseInt(m[1]), proto: m[2], state: m[3], service: m[4].trim() });
-  }
-  return { status: 'ok', ports };
-}
-
-async function checkBreaches(domain) {
-  const data = await fetchJSON(`https://haveibeenpwned.com/api/v3/breacheddomain/${domain}`);
-  if (!data) return { status: 'no-key', breaches: [] };
-  if (Array.isArray(data)) return { status: 'ok', breaches: data };
-  return { status: 'error', breaches: [] };
-}
-
-async function checkSubdomains(domain) {
-  const data = await fetchJSON(`https://crt.sh/?q=%.${domain}&output=json`);
-  if (!data || !Array.isArray(data)) return [];
-  const subs = new Set();
-  for (const entry of data) {
-    const name = entry.name_value || '';
-    for (const sub of name.split('\n')) {
-      const clean = sub.trim().replace('*.', '');
-      if (clean.endsWith(domain) && clean !== domain) subs.add(clean);
-    }
-  }
-  return Array.from(subs).slice(0, 15);
-}
-
-module.exports = async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-
-  const { domain } = req.query;
-  if (!domain) return res.status(400).json({ error: 'Falta el dominio' });
-
-  const clean = domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase().trim();
-  if (!clean.includes('.')) return res.status(400).json({ error: 'Dominio inválido' });
-
-  try {
-    const [ssl, dnsData, portsData, subdomains] = await Promise.all([
-      checkSSL(clean),
-      checkDNS(clean),
-      checkPorts(clean),
-      checkSubdomains(clean)
-    ]);
-    const breachData = await checkBreaches(clean);
-    res.status(200).json({ domain: clean, ssl, dns: dnsData, ports: portsData, breaches: breachData, subdomains });
-  } catch(e) {
-    res.status(500).json({ error: 'Error interno', detail: e.message });
-  }
 };
