@@ -1,9 +1,10 @@
-// api/scan.js — ReconARG v3
-// 100 % gratuito, sin API keys. Compatible con Vercel Serverless (max 25 s).
+// api/scan.js — ReconARG v4
+// 100 % gratuito, compatible con Vercel Serverless (max 10s Hobby plan).
 //   SSL    → tls nativo Node.js
 //   DNS    → Google DNS-over-HTTPS (ilimitado)
 //   Ports  → Shodan InternetDB (sin key, sin límite practico)
-//   Subs   → crt.sh Certificate Transparency (con timeout agresivo)
+//   Subs   → crt.sh Certificate Transparency (sin key)
+//   Breach → HaveIBeenPwned API v3 (key via env HIBP_API_KEY)
 'use strict';
 
 const https = require('https');
@@ -11,12 +12,16 @@ const tls   = require('tls');
 const dns   = require('dns').promises;
 
 /* ─── fetch con timeout ──────────────────────────────────────────────────── */
-function fetchJSON(url, ms = 5000) {
+function fetchJSON(url, ms = 5000, headers = {}) {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { headers: { 'User-Agent': 'ReconARG/3.0' } }, (res) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'ReconARG/4.0', ...headers } }, (res) => {
       let body = '';
       res.on('data', c => (body += c));
       res.on('end', () => {
+        // HIBP returns 404 when domain has no breaches — that's ok
+        if (res.statusCode === 404) return resolve([]);
+        if (res.statusCode === 401) return reject(new Error('hibp-unauth'));
+        if (res.statusCode === 429) return reject(new Error('hibp-ratelimit'));
         try { resolve(JSON.parse(body)); }
         catch (e) { reject(new Error('JSON: ' + body.slice(0, 60))); }
       });
@@ -84,9 +89,7 @@ const SVC = {21:'FTP',22:'SSH',23:'Telnet',25:'SMTP',53:'DNS',80:'HTTP',110:'POP
 async function checkPorts(ip) {
   try {
     const d = await fetchJSON('https://internetdb.shodan.io/' + ip, 6000);
-    if (!d || d.detail || !Array.isArray(d.ports)) {
-      return { status: 'ok', ports: [] };
-    }
+    if (!d || d.detail || !Array.isArray(d.ports)) return { status: 'ok', ports: [] };
     return {
       status: 'ok',
       ports:  d.ports.map(p => ({ port: p, service: SVC[p] || 'unknown', status: 'open' })),
@@ -113,6 +116,37 @@ async function checkSubdomains(domain) {
     }
     return [...set].sort().slice(0, 25);
   } catch (_) { return []; }
+}
+
+/* ─── Breaches: HaveIBeenPwned ───────────────────────────────────────────── */
+async function checkBreaches(domain) {
+  const key = process.env.HIBP_API_KEY;
+  if (!key) return { status: 'no-key', breaches: [] };
+  try {
+    const data = await fetchJSON(
+      'https://haveibeenpwned.com/api/v3/breacheddomain/' + encodeURIComponent(domain),
+      6000,
+      { 'hibp-api-key': key }
+    );
+    // data is [] (404→[]) or an object {email: [breachNames]}
+    if (Array.isArray(data) && data.length === 0) {
+      return { status: 'ok', breaches: [] };
+    }
+    if (typeof data === 'object' && !Array.isArray(data)) {
+      // Flatten: collect unique breach names across all emails
+      const names = new Set();
+      for (const breachList of Object.values(data)) {
+        for (const b of breachList) names.add(b);
+      }
+      const breaches = [...names].sort();
+      return { status: 'ok', breaches };
+    }
+    return { status: 'ok', breaches: [] };
+  } catch (e) {
+    if (e.message === 'hibp-unauth') return { status: 'no-key', breaches: [] };
+    if (e.message === 'hibp-ratelimit') return { status: 'ok', breaches: [], note: 'rate-limited' };
+    return { status: 'ok', breaches: [] };
+  }
 }
 
 /* ─── Resolver IP ────────────────────────────────────────────────────────── */
@@ -142,11 +176,12 @@ module.exports = async (req, res) => {
   try { ip = await resolveIP(domain); }
   catch (_) { return res.status(400).json({ error: 'No se pudo resolver: ' + domain }); }
 
-  const [ssl, dnsData, portsData, subdomains] = await Promise.all([
+  const [ssl, dnsData, portsData, subdomains, breachData] = await Promise.all([
     checkSSL(domain),
     checkDNS(domain),
     checkPorts(ip),
     checkSubdomains(domain),
+    checkBreaches(domain),
   ]);
 
   return res.status(200).json({
@@ -154,6 +189,6 @@ module.exports = async (req, res) => {
     dns:       dnsData,
     ports:     portsData,
     subdomains,
-    breaches:  { status: 'no-key', breaches: [] },
+    breaches:  breachData,
   });
 };
