@@ -1,24 +1,46 @@
 'use strict';
-// ReconARG Desktop - server.js
-// Servidor Express portable con scanner + generación de PDFs
-// Funciona 100% offline excepto las llamadas al scanner (necesita internet)
+// ReconARG Desktop - server.js v2
+// Servidor Express portable con scanner + generacion de PDFs
+// FIXES: eliminado pdfkit (incompatible con pkg), usando PDF nativo
+//        corregido auto-open en Windows, manejo de errores robusto
 
 const express = require('express');
 const path = require('path');
 const https = require('https');
 const tls = require('tls');
 const dns = require('dns').promises;
-const PDFDocument = require('pdfkit');
+const { execFile, exec } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 
 const PORT = 3737;
 const HIBP_KEY = '032a78c1720f4dadb2b86593991ce75b';
 
-/* ─── Helper: fetch con timeout ─────────────────────────────────────────── */
+// Log a archivo para debug en caso de crash
+const logFile = path.join(os.tmpdir(), 'reconarg-debug.log');
+function log(msg) {
+  const line = new Date().toISOString() + ' ' + msg + '\n';
+  try { fs.appendFileSync(logFile, line); } catch(_) {}
+  console.log(msg);
+}
+
+// Capturar errores no manejados para no crashear silenciosamente
+process.on('uncaughtException', function(err) {
+  log('UNCAUGHT: ' + err.message + '\n' + err.stack);
+});
+process.on('unhandledRejection', function(reason) {
+  log('UNHANDLED REJECTION: ' + reason);
+});
+
+log('ReconARG Desktop v2 iniciando...');
+log('Log en: ' + logFile);
+
+/* Helper: fetch con timeout */
 function fetchJSON(url, ms, headers) {
   ms = ms || 6000;
   headers = headers || {};
   return new Promise(function(resolve, reject) {
-    var req = https.get(url, { headers: Object.assign({'User-Agent':'ReconARG-Desktop/1.0'}, headers) }, function(res) {
+    var req = https.get(url, { headers: Object.assign({'User-Agent':'ReconARG-Desktop/2.0'}, headers) }, function(res) {
       var body = '';
       res.on('data', function(c) { body += c; });
       res.on('end', function() {
@@ -26,7 +48,7 @@ function fetchJSON(url, ms, headers) {
         if (res.statusCode === 401) return reject(new Error('hibp-unauth'));
         if (res.statusCode === 429) return reject(new Error('hibp-ratelimit'));
         try { resolve(JSON.parse(body)); }
-        catch(e) { reject(new Error('JSON parse: ' + body.slice(0,60))); }
+        catch(e) { reject(new Error('JSON parse error')); }
       });
     });
     req.setTimeout(ms, function() { req.destroy(); reject(new Error('timeout')); });
@@ -38,7 +60,7 @@ function dnsQ(name, type) {
   return fetchJSON('https://dns.google/resolve?name=' + encodeURIComponent(name) + '&type=' + type, 4000);
 }
 
-/* ─── SSL ────────────────────────────────────────────────────────────────── */
+/* SSL */
 function checkSSL(domain) {
   var fallback = { valid: false, issuer: null, expires: null, days_remaining: null };
   return new Promise(function(resolve) {
@@ -57,34 +79,38 @@ function checkSSL(domain) {
             expires: exp.toISOString().split('T')[0],
             days_remaining: days
           });
-        } catch(_) { resolve(fallback); }
+        } catch(e) { resolve(fallback); }
       });
       s.setTimeout(5000, function() { s.destroy(); resolve(fallback); });
       s.on('error', function() { resolve(fallback); });
-    } catch(_) { resolve(fallback); }
+    } catch(e) { resolve(fallback); }
   });
 }
 
-/* ─── DNS: SPF, DMARC, MX ───────────────────────────────────────────────── */
+/* DNS */
 async function checkDNS(domain) {
-  var results = await Promise.allSettled([
-    dnsQ(domain, 'TXT'),
-    dnsQ('_dmarc.' + domain, 'TXT'),
-    dnsQ(domain, 'MX')
-  ]);
-  var sR = results[0], dR = results[1], mR = results[2];
-  var spf = sR.status === 'fulfilled' && Array.isArray(sR.value.Answer) &&
-    sR.value.Answer.some(function(r) { return (r.data||'').includes('v=spf1'); });
-  var dmarc = dR.status === 'fulfilled' && Array.isArray(dR.value.Answer) &&
-    dR.value.Answer.some(function(r) { return (r.data||'').includes('v=DMARC1'); });
-  var mx = null;
-  if (mR.status === 'fulfilled' && mR.value.Answer && mR.value.Answer.length) {
-    mx = (mR.value.Answer[0].data||'').replace(/^\d+\s+/,'').replace(/\.$/,'');
+  try {
+    var results = await Promise.allSettled([
+      dnsQ(domain, 'TXT'),
+      dnsQ('_dmarc.' + domain, 'TXT'),
+      dnsQ(domain, 'MX')
+    ]);
+    var sR = results[0], dR = results[1], mR = results[2];
+    var spf = sR.status === 'fulfilled' && Array.isArray(sR.value.Answer) &&
+      sR.value.Answer.some(function(r) { return (r.data||'').includes('v=spf1'); });
+    var dmarc = dR.status === 'fulfilled' && Array.isArray(dR.value.Answer) &&
+      dR.value.Answer.some(function(r) { return (r.data||'').includes('v=DMARC1'); });
+    var mx = null;
+    if (mR.status === 'fulfilled' && mR.value.Answer && mR.value.Answer.length) {
+      mx = (mR.value.Answer[0].data||'').replace(/^\d+\s+/,'').replace(/\.$/,'');
+    }
+    return { spf: !!spf, dmarc: !!dmarc, mx: mx };
+  } catch(e) {
+    return { spf: false, dmarc: false, mx: null };
   }
-  return { spf: !!spf, dmarc: !!dmarc, mx: mx };
 }
 
-/* ─── Ports: Shodan InternetDB ───────────────────────────────────────────── */
+/* Ports via Shodan InternetDB */
 var SVC = {21:'FTP',22:'SSH',23:'Telnet',25:'SMTP',53:'DNS',80:'HTTP',110:'POP3',
   143:'IMAP',443:'HTTPS',445:'SMB',1433:'MSSQL',3306:'MySQL',3389:'RDP',
   5432:'PostgreSQL',5900:'VNC',6379:'Redis',8080:'HTTP-Alt',8443:'HTTPS-Alt',27017:'MongoDB'};
@@ -102,12 +128,12 @@ async function checkPorts(domain) {
       ports: d.ports.map(function(p) { return { port: p, service: SVC[p]||'unknown', status: 'open' }; }),
       vulns: d.vulns || []
     };
-  } catch(_) {
+  } catch(e) {
     return { status: 'ok', ip: null, ports: [] };
   }
 }
 
-/* ─── Subdominios: crt.sh ────────────────────────────────────────────────── */
+/* Subdomains via crt.sh */
 async function checkSubdomains(domain) {
   try {
     var rows = await fetchJSON('https://crt.sh/?q=%25.' + encodeURIComponent(domain) + '&output=json', 8000);
@@ -120,10 +146,10 @@ async function checkSubdomains(domain) {
       });
     });
     return Array.from(set).sort().slice(0, 25);
-  } catch(_) { return []; }
+  } catch(e) { return []; }
 }
 
-/* ─── HIBP: filtraciones ─────────────────────────────────────────────────── */
+/* HIBP */
 async function checkBreaches(domain) {
   try {
     var data = await fetchJSON(
@@ -137,9 +163,10 @@ async function checkBreaches(domain) {
   }
 }
 
-/* ─── Scanner principal ──────────────────────────────────────────────────── */
+/* Scanner principal */
 async function scanDomain(domain) {
   domain = domain.toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim();
+  log('Escaneando: ' + domain);
   var [ssl, dns_r, ports, subs, breaches] = await Promise.all([
     checkSSL(domain),
     checkDNS(domain),
@@ -147,227 +174,19 @@ async function scanDomain(domain) {
     checkSubdomains(domain),
     checkBreaches(domain)
   ]);
+  log('Scan completo para: ' + domain);
   return { domain, timestamp: new Date().toISOString(), ssl, dns: dns_r, ports, subdomains: subs, breaches };
 }
 
-/* ─── Express server ─────────────────────────────────────────────────────── */
-const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+/* ============================================================
+   PDF GENERATION - NATIVO SIN LIBRERIAS EXTERNAS
+   Generamos PDF valido manualmente para evitar problemas con pkg
+   ============================================================ */
 
-app.get('/api/scan', async function(req, res) {
-  var domain = req.query.domain;
-  if (!domain) return res.status(400).json({ error: 'domain required' });
-  try {
-    var result = await scanDomain(domain);
-    res.json(result);
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+function escPDF(s) {
+  return String(s||'').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/\r/g,'').replace(/\n/g,' ');
+}
 
-/* ─── PDF: Informe Ejecutivo ─────────────────────────────────────────────── */
-app.post('/api/pdf/ejecutivo', function(req, res) {
-  var data = req.body;
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', 'attachment; filename="informe-ejecutivo-' + data.domain + '.pdf"');
-  
-  var doc = new PDFDocument({ margin: 50, size: 'A4' });
-  doc.pipe(res);
-  
-  // Header
-  doc.rect(0, 0, 595, 100).fill('#0a0a1a');
-  doc.fillColor('#e8c84a').fontSize(22).font('Helvetica-Bold')
-     .text('DIAGNÓSTICO EXPRESS', 50, 30);
-  doc.fillColor('#ffffff').fontSize(11).font('Helvetica')
-     .text('ReconARG · Evaluación de Seguridad', 50, 58);
-  doc.fillColor('#aaaaaa').fontSize(9)
-     .text('Confidencial · Solo para uso interno', 50, 75);
-  
-  doc.moveDown(2);
-  doc.fillColor('#000000');
-  
-  // Score de riesgo
-  var score = calcRiskScore(data);
-  var riskLabel = score <= 30 ? 'BAJO' : score <= 60 ? 'MEDIO' : 'ALTO';
-  var riskColor = score <= 30 ? '#22c55e' : score <= 60 ? '#f59e0b' : '#ef4444';
-  
-  doc.rect(50, 120, 495, 70).fill('#f8f9fa').stroke('#e2e8f0');
-  doc.fillColor('#000000').fontSize(11).font('Helvetica-Bold').text('Dominio analizado:', 70, 132);
-  doc.fillColor('#1a1a2e').fontSize(16).text(data.domain, 70, 148);
-  doc.fillColor('#666666').fontSize(9).font('Helvetica').text('Fecha: ' + new Date(data.timestamp).toLocaleDateString('es-AR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}), 70, 170);
-  
-  // Score visual
-  doc.rect(400, 125, 130, 60).fill(riskColor);
-  doc.fillColor('#ffffff').fontSize(11).font('Helvetica-Bold').text('NIVEL DE RIESGO', 410, 133);
-  doc.fontSize(22).text(riskLabel, 420, 148);
-  
-  doc.moveDown(4);
-  
-  // Resumen ejecutivo - tabla de hallazgos
-  doc.fillColor('#000000').fontSize(13).font('Helvetica-Bold').text('RESUMEN DE HALLAZGOS', 50, 210);
-  doc.moveTo(50, 228).lineTo(545, 228).stroke('#e8c84a');
-  
-  var items = [
-    ['🔒 Certificado SSL', data.ssl && data.ssl.valid ? 'VÁLIDO - ' + data.ssl.days_remaining + ' días' : 'INVÁLIDO O AUSENTE', data.ssl && data.ssl.valid && data.ssl.days_remaining > 30 ? 'ok' : 'warn'],
-    ['📧 Protección Email', (data.dns && data.dns.spf && data.dns.dmarc) ? 'SPF + DMARC configurados' : 'Configuración incompleta', (data.dns && data.dns.spf && data.dns.dmarc) ? 'ok' : 'warn'],
-    ['🌐 Puertos expuestos', (data.ports && data.ports.ports ? data.ports.ports.length : 0) + ' puertos detectados', (data.ports && data.ports.ports && data.ports.ports.length > 10) ? 'warn' : 'ok'],
-    ['🔍 Subdominios', (Array.isArray(data.subdomains) ? data.subdomains.length : 0) + ' subdominios encontrados', 'info'],
-    ['💧 Filtraciones HIBP', data.breaches && data.breaches.count > 0 ? data.breaches.count + ' filtración(es) detectada(s)' : 'Sin filtraciones conocidas', data.breaches && data.breaches.count > 0 ? 'warn' : 'ok']
-  ];
-  
-  var y = 240;
-  items.forEach(function(item) {
-    var bgColor = item[2] === 'ok' ? '#f0fdf4' : item[2] === 'warn' ? '#fff7ed' : '#eff6ff';
-    var dotColor = item[2] === 'ok' ? '#22c55e' : item[2] === 'warn' ? '#f59e0b' : '#3b82f6';
-    doc.rect(50, y, 495, 30).fill(bgColor).stroke('#e2e8f0');
-    doc.circle(68, y + 15, 5).fill(dotColor);
-    doc.fillColor('#000000').fontSize(10).font('Helvetica-Bold').text(item[0], 80, y + 8);
-    doc.font('Helvetica').text(item[1], 230, y + 8);
-    y += 35;
-  });
-  
-  // Recomendaciones
-  doc.moveDown(2);
-  var recY = y + 20;
-  doc.fillColor('#000000').fontSize(13).font('Helvetica-Bold').text('RECOMENDACIONES PRIORITARIAS', 50, recY);
-  doc.moveTo(50, recY + 18).lineTo(545, recY + 18).stroke('#e8c84a');
-  
-  var recs = buildRecommendations(data);
-  var recTextY = recY + 30;
-  recs.forEach(function(rec, i) {
-    doc.rect(50, recTextY, 8, 8).fill('#e8c84a');
-    doc.fillColor('#000000').fontSize(10).font('Helvetica').text(rec, 65, recTextY - 1, { width: 480 });
-    recTextY += 20;
-  });
-  
-  // Footer
-  doc.fillColor('#888888').fontSize(8).text('Generado por ReconARG · Diagnóstico Express · ' + new Date().toLocaleDateString('es-AR'), 50, 780);
-  doc.text('Este informe es confidencial y de uso exclusivo del cliente.', 50, 792);
-  
-  doc.end();
-});
-
-/* ─── PDF: Informe Técnico ───────────────────────────────────────────────── */
-app.post('/api/pdf/tecnico', function(req, res) {
-  var data = req.body;
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', 'attachment; filename="informe-tecnico-' + data.domain + '.pdf"');
-  
-  var doc = new PDFDocument({ margin: 50, size: 'A4' });
-  doc.pipe(res);
-  
-  // Header
-  doc.rect(0, 0, 595, 100).fill('#0a0a1a');
-  doc.fillColor('#e8c84a').fontSize(20).font('Helvetica-Bold')
-     .text('INFORME TÉCNICO DE SEGURIDAD', 50, 30);
-  doc.fillColor('#ffffff').fontSize(11).font('Helvetica')
-     .text('ReconARG · Análisis de superficie de ataque', 50, 56);
-  doc.fillColor('#aaaaaa').fontSize(9)
-     .text('Clasificación: CONFIDENCIAL · TLP:AMBER', 50, 74);
-  
-  // Metadata
-  doc.rect(50, 115, 495, 55).fill('#f8f9fa').stroke('#e2e8f0');
-  doc.fillColor('#000000').fontSize(10).font('Helvetica-Bold').text('Objetivo:', 65, 125);
-  doc.font('Helvetica').text(data.domain, 130, 125);
-  doc.font('Helvetica-Bold').text('Análisis:', 65, 140);
-  doc.font('Helvetica').text(new Date(data.timestamp).toLocaleString('es-AR'), 130, 140);
-  doc.font('Helvetica-Bold').text('IP:', 65, 155);
-  doc.font('Helvetica').text((data.ports && data.ports.ip) || 'No resuelto', 130, 155);
-  doc.font('Helvetica-Bold').text('Score:', 350, 125);
-  var score = calcRiskScore(data);
-  doc.font('Helvetica').fillColor(score <= 30 ? '#22c55e' : score <= 60 ? '#f59e0b' : '#ef4444')
-     .fontSize(16).text(score + '/100', 400, 120);
-  
-  var y = 185;
-  
-  // SSL Section
-  y = addSection(doc, 'CERTIFICADO SSL/TLS', y);
-  if (data.ssl) {
-    var sslRows = [
-      ['Estado', data.ssl.valid ? '✓ Válido' : '✗ Inválido o ausente'],
-      ['Emisor', data.ssl.issuer || 'Desconocido'],
-      ['Sujeto', data.ssl.subject || 'N/A'],
-      ['Vencimiento', data.ssl.expires || 'N/A'],
-      ['Días restantes', data.ssl.days_remaining !== null ? data.ssl.days_remaining + ' días' : 'N/A']
-    ];
-    y = addTable(doc, sslRows, y);
-  }
-  
-  // DNS Section
-  y = addSection(doc, 'CONFIGURACIÓN DNS / EMAIL', y + 10);
-  if (data.dns) {
-    var dnsRows = [
-      ['SPF', data.dns.spf ? '✓ Configurado' : '✗ Ausente - Riesgo de spoofing'],
-      ['DMARC', data.dns.dmarc ? '✓ Configurado' : '✗ Ausente - Sin política de rechazo'],
-      ['MX (servidor de correo)', data.dns.mx || 'No encontrado']
-    ];
-    y = addTable(doc, dnsRows, y);
-  }
-  
-  // Ports Section  
-  y = addSection(doc, 'PUERTOS ABIERTOS (vía Shodan InternetDB)', y + 10);
-  if (data.ports && data.ports.ports && data.ports.ports.length > 0) {
-    var portRows = data.ports.ports.map(function(p) {
-      var risk = [21,23,445,3389,6379,27017].includes(p.port) ? '⚠ ALTO RIESGO' : '';
-      return [p.port.toString(), p.service, p.status, risk];
-    });
-    y = addPortTable(doc, portRows, y);
-    if (data.ports.vulns && data.ports.vulns.length > 0) {
-      doc.fillColor('#ef4444').fontSize(9).font('Helvetica-Bold')
-         .text('CVEs detectados: ' + data.ports.vulns.join(', '), 50, y + 5, {width: 495});
-      y += 20;
-    }
-  } else {
-    doc.fillColor('#666666').fontSize(9).font('Helvetica').text('No se detectaron puertos abiertos en el registro de Shodan.', 50, y);
-    y += 20;
-  }
-  
-  // Subdomains Section
-  y = addSection(doc, 'SUBDOMINIOS (vía crt.sh Certificate Transparency)', y + 10);
-  if (Array.isArray(data.subdomains) && data.subdomains.length > 0) {
-    var cols = 3;
-    var colWidth = 160;
-    data.subdomains.forEach(function(sub, i) {
-      var col = i % cols;
-      var row = Math.floor(i / cols);
-      doc.fillColor('#1a1a2e').fontSize(8).font('Helvetica')
-         .text('• ' + sub, 50 + col * colWidth, y + row * 14, { width: colWidth - 5 });
-    });
-    y += Math.ceil(data.subdomains.length / cols) * 14 + 10;
-  } else {
-    doc.fillColor('#666666').fontSize(9).font('Helvetica').text('No se encontraron subdominios adicionales.', 50, y);
-    y += 20;
-  }
-  
-  // Breaches Section
-  y = addSection(doc, 'FILTRACIONES DE DATOS (HIBP)', y + 10);
-  if (data.breaches && data.breaches.count > 0) {
-    doc.fillColor('#ef4444').fontSize(10).font('Helvetica-Bold')
-       .text('⚠ ' + data.breaches.count + ' filtración(es) detectada(s)', 50, y);
-    y += 15;
-    if (Array.isArray(data.breaches.breaches)) {
-      data.breaches.breaches.slice(0,5).forEach(function(b, i) {
-        doc.fillColor('#000000').fontSize(9).font('Helvetica')
-           .text((i+1) + '. ' + (typeof b === 'string' ? b : JSON.stringify(b)), 50, y + i*14, {width:495});
-      });
-      y += Math.min(data.breaches.breaches.length, 5) * 14 + 10;
-    }
-  } else {
-    doc.fillColor('#22c55e').fontSize(10).font('Helvetica-Bold')
-       .text('✓ Sin filtraciones detectadas en la base de datos HIBP', 50, y);
-    y += 20;
-  }
-  
-  // Footer
-  doc.fillColor('#888888').fontSize(8)
-     .text('ReconARG · Diagnóstico Express · Informe Técnico · ' + new Date().toLocaleDateString('es-AR'), 50, 780);
-  doc.text('Datos obtenidos de: TLS nativo, Google DoH, Shodan InternetDB, crt.sh, HaveIBeenPwned', 50, 792);
-  
-  doc.end();
-});
-
-/* ─── Helpers para PDF ───────────────────────────────────────────────────── */
 function calcRiskScore(data) {
   var score = 0;
   if (!data.ssl || !data.ssl.valid) score += 25;
@@ -385,60 +204,408 @@ function calcRiskScore(data) {
 
 function buildRecommendations(data) {
   var recs = [];
-  if (!data.ssl || !data.ssl.valid) recs.push('Instalar o renovar certificado SSL/TLS inmediatamente para proteger la comunicación.');
-  else if (data.ssl.days_remaining < 30) recs.push('Renovar certificado SSL antes del vencimiento (' + data.ssl.days_remaining + ' días restantes).');
+  if (!data.ssl || !data.ssl.valid) recs.push('Instalar o renovar certificado SSL/TLS para proteger la comunicacion.');
+  else if (data.ssl.days_remaining < 30) recs.push('Renovar certificado SSL (' + data.ssl.days_remaining + ' dias restantes).');
   if (!data.dns || !data.dns.spf) recs.push('Configurar registro SPF en DNS para prevenir spoofing de email.');
-  if (!data.dns || !data.dns.dmarc) recs.push('Implementar política DMARC para controlar el uso del dominio en emails.');
+  if (!data.dns || !data.dns.dmarc) recs.push('Implementar politica DMARC para controlar uso del dominio en emails.');
   if (data.ports && data.ports.ports) {
-    var dangerous = data.ports.ports.filter(function(p) { return [21,23,3389,6379,27017].includes(p.port); });
-    if (dangerous.length > 0) recs.push('Restringir acceso a puertos sensibles: ' + dangerous.map(function(p){return p.port+'/'+p.service;}).join(', '));
+    var d2 = data.ports.ports.filter(function(p) { return [21,23,3389,6379,27017].includes(p.port); });
+    if (d2.length > 0) recs.push('Restringir acceso a puertos sensibles: ' + d2.map(function(p){return p.port+'/'+p.service;}).join(', '));
   }
-  if (data.breaches && data.breaches.count > 0) recs.push('Se detectaron ' + data.breaches.count + ' filtración(es): actualizar credenciales y revisar política de contraseñas.');
-  if (recs.length === 0) recs.push('El dominio presenta una postura de seguridad aceptable. Mantener monitoreo periódico.');
+  if (data.breaches && data.breaches.count > 0) recs.push('Se detectaron ' + data.breaches.count + ' filtracion(es): actualizar credenciales.');
+  if (recs.length === 0) recs.push('El dominio presenta una postura de seguridad aceptable. Mantener monitoreo periodico.');
   return recs;
 }
 
-function addSection(doc, title, y) {
-  if (y > 720) { doc.addPage(); y = 50; }
-  doc.fillColor('#0a0a1a').fontSize(11).font('Helvetica-Bold').text(title, 50, y);
-  doc.moveTo(50, y + 16).lineTo(545, y + 16).stroke('#e8c84a');
-  return y + 25;
+// Genera PDF usando solo streams nativos
+// Usamos jsPDF-like approach: construimos el PDF como string
+function generatePDF(title, lines) {
+  // lines: array de {text, x, y, size, bold, color}
+  // Retorna Buffer con PDF valido
+
+  var objs = [];
+  var offsets = [];
+  var id = 0;
+
+  function addObj(content) {
+    id++;
+    offsets.push(null); // placeholder
+    objs.push({ id: id, content: content });
+    return id;
+  }
+
+  // Catalog, Pages placeholders
+  var catalogId = 1;
+  var pagesId = 2;
+  var fontHId = 3;
+  var fontBId = 4;
+  var pageId = 5;
+  var contentId = 6;
+
+  // Build content stream
+  var stream = [];
+  stream.push('BT');
+
+  lines.forEach(function(l) {
+    var r = 0, g = 0, b = 0;
+    if (l.color === 'gold') { r=0.91; g=0.78; b=0.29; }
+    else if (l.color === 'white') { r=1; g=1; b=1; }
+    else if (l.color === 'gray') { r=0.5; g=0.5; b=0.5; }
+    else if (l.color === 'red') { r=0.94; g=0.27; b=0.27; }
+    else if (l.color === 'green') { r=0.13; g=0.77; b=0.37; }
+    else if (l.color === 'orange') { r=0.96; g=0.62; b=0.04; }
+    else if (l.color === 'dark') { r=0.04; g=0.04; b=0.1; }
+    else { r=0; g=0; b=0; }
+
+    var font = l.bold ? '/Fb' : '/Fh';
+    var y842 = 842 - l.y; // PDF coords from bottom, A4=842pt
+
+    stream.push(r.toFixed(2) + ' ' + g.toFixed(2) + ' ' + b.toFixed(2) + ' rg');
+    stream.push(font + ' ' + (l.size||10) + ' Tf');
+    stream.push(l.x + ' ' + y842 + ' Td');
+    stream.push('(' + escPDF(l.text) + ') Tj');
+    // reset position
+    stream.push('-' + l.x + ' -' + y842 + ' Td');
+  });
+
+  stream.push('ET');
+
+  // Background rects
+  var rects = [];
+  // Dark header
+  rects.push('0.04 0.04 0.10 rg');
+  rects.push('0 742 595 100 re f');
+  // Light body bg
+  rects.push('1 1 1 rg');
+  rects.push('0 0 595 742 re f');
+
+  var fullStream = rects.join('\n') + '\n' + stream.join('\n');
+  var streamBytes = Buffer.from(fullStream, 'latin1');
+
+  // Build PDF
+  var parts = [];
+
+  parts.push(Buffer.from('%PDF-1.4\n', 'latin1'));
+
+  // Object 1: Catalog
+  var catStr = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
+  parts.push(Buffer.from(catStr, 'latin1'));
+
+  // Object 2: Pages
+  var pagesStr = '2 0 obj\n<< /Type /Pages /Kids [5 0 R] /Count 1 >>\nendobj\n';
+  parts.push(Buffer.from(pagesStr, 'latin1'));
+
+  // Object 3: Font Helvetica
+  var fontHStr = '3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n';
+  parts.push(Buffer.from(fontHStr, 'latin1'));
+
+  // Object 4: Font Helvetica-Bold
+  var fontBStr = '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj\n';
+  parts.push(Buffer.from(fontBStr, 'latin1'));
+
+  // Object 5: Page
+  var pageStr = '5 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /Fh 3 0 R /Fb 4 0 R >> >> /Contents 6 0 R >>\nendobj\n';
+  parts.push(Buffer.from(pageStr, 'latin1'));
+
+  // Object 6: Content stream
+  var contHdr = '6 0 obj\n<< /Length ' + streamBytes.length + ' >>\nstream\n';
+  var contFtr = '\nendstream\nendobj\n';
+  parts.push(Buffer.from(contHdr, 'latin1'));
+  parts.push(streamBytes);
+  parts.push(Buffer.from(contFtr, 'latin1'));
+
+  // Xref
+  var bodyBuf = Buffer.concat(parts);
+  var xrefOffset = bodyBuf.length;
+
+  // Calculate object offsets
+  var offArr = [];
+  var pos = '%PDF-1.4\n'.length;
+  offArr.push(pos); // obj 1
+  pos += catStr.length;
+  offArr.push(pos); // obj 2
+  pos += pagesStr.length;
+  offArr.push(pos); // obj 3
+  pos += fontHStr.length;
+  offArr.push(pos); // obj 4
+  pos += fontBStr.length;
+  offArr.push(pos); // obj 5
+  pos += pageStr.length;
+  offArr.push(pos); // obj 6
+
+  var xref = 'xref\n0 7\n';
+  xref += '0000000000 65535 f \n';
+  offArr.forEach(function(o) {
+    xref += String('0000000000' + o).slice(-10) + ' 00000 n \n';
+  });
+  xref += 'trailer\n<< /Size 7 /Root 1 0 R >>\n';
+  xref += 'startxref\n' + xrefOffset + '\n%%EOF\n';
+
+  return Buffer.concat([bodyBuf, Buffer.from(xref, 'latin1')]);
 }
 
-function addTable(doc, rows, y) {
-  rows.forEach(function(row) {
-    if (y > 730) { doc.addPage(); y = 50; }
-    doc.rect(50, y, 495, 18).fill('#f8f9fa').stroke('#e2e8f0');
-    doc.fillColor('#555555').fontSize(9).font('Helvetica-Bold').text(row[0], 55, y + 4, {width:140});
-    doc.fillColor('#000000').font('Helvetica').text(row[1] || '', 200, y + 4, {width:340});
+function buildEjecutivoPDF(data) {
+  var score = calcRiskScore(data);
+  var riskLabel = score <= 30 ? 'BAJO' : score <= 60 ? 'MEDIO' : 'ALTO';
+  var riskColor = score <= 30 ? 'green' : score <= 60 ? 'orange' : 'red';
+  var fecha = new Date(data.timestamp).toLocaleDateString('es-AR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  var recs = buildRecommendations(data);
+
+  var lines = [
+    // Header (sobre fondo oscuro)
+    {text:'DIAGNOSTICO EXPRESS', x:50, y:35, size:20, bold:true, color:'gold'},
+    {text:'ReconARG - Evaluacion de Seguridad', x:50, y:60, size:11, color:'white'},
+    {text:'Confidencial - Solo para uso interno', x:50, y:78, size:9, color:'gray'},
+    // Dominio
+    {text:'Dominio analizado:', x:65, y:120, size:10, bold:true},
+    {text:data.domain, x:65, y:137, size:15, bold:true, color:'dark'},
+    {text:'Fecha: ' + fecha, x:65, y:158, size:9, color:'gray'},
+    {text:'NIVEL DE RIESGO: ' + riskLabel + ' (' + score + '/100)', x:370, y:132, size:10, bold:true, color:riskColor},
+    // Seccion hallazgos
+    {text:'RESUMEN DE HALLAZGOS', x:50, y:200, size:13, bold:true},
+    {text:'-------------------------------------------------------------', x:50, y:215, size:9, color:'gray'},
+  ];
+
+  var y = 230;
+  var items = [
+    ['Certificado SSL', data.ssl && data.ssl.valid ? 'VALIDO - ' + data.ssl.days_remaining + ' dias' : 'INVALIDO O AUSENTE',
+      data.ssl && data.ssl.valid && data.ssl.days_remaining > 30 ? null : 'red'],
+    ['Proteccion Email (SPF+DMARC)', (data.dns && data.dns.spf && data.dns.dmarc) ? 'Configurados correctamente' : 'Configuracion incompleta',
+      (data.dns && data.dns.spf && data.dns.dmarc) ? null : 'orange'],
+    ['Puertos expuestos', (data.ports && data.ports.ports ? data.ports.ports.length : 0) + ' puertos detectados', null],
+    ['Subdominios encontrados', (Array.isArray(data.subdomains) ? data.subdomains.length : 0) + ' subdominios', null],
+    ['Filtraciones de datos (HIBP)', data.breaches && data.breaches.count > 0 ? data.breaches.count + ' filtracion(es) detectada(s)' : 'Sin filtraciones conocidas',
+      data.breaches && data.breaches.count > 0 ? 'red' : 'green'],
+  ];
+
+  items.forEach(function(item) {
+    lines.push({text:'- ' + item[0] + ':', x:65, y:y, size:10, bold:true});
+    lines.push({text:item[1], x:250, y:y, size:10, color: item[2] || null});
+    y += 22;
+  });
+
+  y += 15;
+  lines.push({text:'RECOMENDACIONES PRIORITARIAS', x:50, y:y, size:13, bold:true});
+  y += 18;
+  lines.push({text:'-------------------------------------------------------------', x:50, y:y, size:9, color:'gray'});
+  y += 15;
+
+  recs.forEach(function(rec, i) {
+    lines.push({text:(i+1) + '. ' + rec, x:65, y:y, size:10});
     y += 20;
   });
-  return y;
-}
 
-function addPortTable(doc, rows, y) {
-  // Header
-  doc.rect(50, y, 495, 18).fill('#1a1a2e');
-  doc.fillColor('#ffffff').fontSize(9).font('Helvetica-Bold')
-     .text('Puerto', 55, y+4).text('Servicio', 120, y+4).text('Estado', 250, y+4).text('Riesgo', 340, y+4);
   y += 20;
-  rows.forEach(function(row, i) {
-    if (y > 730) { doc.addPage(); y = 50; }
-    var bg = i % 2 === 0 ? '#f8f9fa' : '#ffffff';
-    doc.rect(50, y, 495, 18).fill(bg).stroke('#e2e8f0');
-    doc.fillColor('#000000').fontSize(9).font('Helvetica')
-       .text(row[0], 55, y+4).text(row[1], 120, y+4).text(row[2], 250, y+4);
-    if (row[3]) doc.fillColor('#ef4444').font('Helvetica-Bold').text(row[3], 340, y+4);
-    y += 20;
-  });
-  return y;
+  lines.push({text:'Generado por ReconARG - Diagnostico Express - ' + new Date().toLocaleDateString('es-AR'), x:50, y:800, size:8, color:'gray'});
+
+  return generatePDF('ejecutivo', lines);
 }
 
-/* ─── Start server ───────────────────────────────────────────────────────── */
-app.listen(PORT, '127.0.0.1', function() {
-  console.log('ReconARG Desktop corriendo en http://localhost:' + PORT);
-  // Auto-open browser
-  var url = 'http://localhost:' + PORT;
-  var start = process.platform === 'win32' ? 'start' : process.platform === 'darwin' ? 'open' : 'xdg-open';
-  require('child_process').exec(start + ' ' + url, function(){});
+function buildTecnicoPDF(data) {
+  var score = calcRiskScore(data);
+  var fecha = new Date(data.timestamp).toLocaleString('es-AR');
+
+  var lines = [
+    {text:'INFORME TECNICO DE SEGURIDAD', x:50, y:35, size:18, bold:true, color:'gold'},
+    {text:'ReconARG - Analisis de superficie de ataque', x:50, y:58, size:11, color:'white'},
+    {text:'Clasificacion: CONFIDENCIAL - TLP:AMBER', x:50, y:76, size:9, color:'gray'},
+    // Meta
+    {text:'Objetivo:', x:65, y:125, size:10, bold:true},
+    {text:data.domain, x:145, y:125, size:10},
+    {text:'Analisis:', x:65, y:140, size:10, bold:true},
+    {text:fecha, x:145, y:140, size:10},
+    {text:'IP:', x:65, y:155, size:10, bold:true},
+    {text:(data.ports && data.ports.ip) || 'No resuelto', x:145, y:155, size:10},
+    {text:'Score de riesgo:', x:350, y:130, size:10, bold:true},
+    {text:score + '/100', x:460, y:130, size:14, bold:true, color: score<=30?'green':score<=60?'orange':'red'},
+  ];
+
+  var y = 185;
+
+  // SSL
+  lines.push({text:'CERTIFICADO SSL/TLS', x:50, y:y, size:11, bold:true});
+  y += 18;
+  lines.push({text:'Estado: ' + (data.ssl && data.ssl.valid ? 'Valido' : 'Invalido o ausente'), x:60, y:y, size:10, color: data.ssl&&data.ssl.valid?'green':'red'});
+  y += 16;
+  lines.push({text:'Emisor: ' + ((data.ssl && data.ssl.issuer) || 'Desconocido'), x:60, y:y, size:10});
+  y += 16;
+  lines.push({text:'Vencimiento: ' + ((data.ssl && data.ssl.expires) || 'N/A') + '  |  Dias restantes: ' + ((data.ssl && data.ssl.days_remaining) || 'N/A'), x:60, y:y, size:10});
+  y += 25;
+
+  // DNS
+  lines.push({text:'CONFIGURACION DNS / EMAIL', x:50, y:y, size:11, bold:true});
+  y += 18;
+  lines.push({text:'SPF: ' + (data.dns && data.dns.spf ? 'Configurado' : 'AUSENTE - Riesgo de spoofing'), x:60, y:y, size:10, color: data.dns&&data.dns.spf?'green':'red'});
+  y += 16;
+  lines.push({text:'DMARC: ' + (data.dns && data.dns.dmarc ? 'Configurado' : 'AUSENTE - Sin politica de rechazo'), x:60, y:y, size:10, color: data.dns&&data.dns.dmarc?'green':'red'});
+  y += 16;
+  lines.push({text:'Servidor de correo (MX): ' + ((data.dns && data.dns.mx) || 'No encontrado'), x:60, y:y, size:10});
+  y += 25;
+
+  // Ports
+  lines.push({text:'PUERTOS ABIERTOS (via Shodan InternetDB)', x:50, y:y, size:11, bold:true});
+  y += 18;
+  if (data.ports && data.ports.ports && data.ports.ports.length > 0) {
+    lines.push({text:'Puerto  Servicio          Riesgo', x:60, y:y, size:9, bold:true});
+    y += 14;
+    data.ports.ports.forEach(function(p) {
+      var highRisk = [21,23,445,3389,6379,27017].includes(p.port);
+      lines.push({text:p.port + '      ' + (p.service + '               ').slice(0,16) + (highRisk ? 'ALTO RIESGO' : '-'), x:60, y:y, size:9, color: highRisk?'red':null});
+      y += 13;
+    });
+    if (data.ports.vulns && data.ports.vulns.length > 0) {
+      lines.push({text:'CVEs: ' + data.ports.vulns.join(', '), x:60, y:y, size:9, color:'red'});
+      y += 16;
+    }
+  } else {
+    lines.push({text:'No se detectaron puertos en registro de Shodan.', x:60, y:y, size:10, color:'gray'});
+    y += 16;
+  }
+  y += 10;
+
+  // Subdomains
+  lines.push({text:'SUBDOMINIOS (via crt.sh Certificate Transparency)', x:50, y:y, size:11, bold:true});
+  y += 18;
+  if (Array.isArray(data.subdomains) && data.subdomains.length > 0) {
+    var cols = 2;
+    data.subdomains.forEach(function(sub, i) {
+      var col = i % cols;
+      var row = Math.floor(i / cols);
+      if (col === 0 && i > 0) y += 13;
+      lines.push({text:'- ' + sub, x:60 + col * 240, y: col === 0 ? y : y, size:9});
+    });
+    y += 20;
+  } else {
+    lines.push({text:'No se encontraron subdominios adicionales.', x:60, y:y, size:10, color:'gray'});
+    y += 20;
+  }
+
+  // Breaches
+  y += 5;
+  lines.push({text:'FILTRACIONES DE DATOS (HIBP)', x:50, y:y, size:11, bold:true});
+  y += 18;
+  if (data.breaches && data.breaches.count > 0) {
+    lines.push({text:'ALERTA: ' + data.breaches.count + ' filtracion(es) detectada(s)', x:60, y:y, size:10, bold:true, color:'red'});
+    y += 16;
+    if (Array.isArray(data.breaches.breaches)) {
+      data.breaches.breaches.slice(0,5).forEach(function(b, i) {
+        lines.push({text:(i+1) + '. ' + (typeof b === 'string' ? b : JSON.stringify(b)), x:70, y:y, size:9});
+        y += 14;
+      });
+    }
+  } else {
+    lines.push({text:'Sin filtraciones detectadas en la base de datos HIBP.', x:60, y:y, size:10, color:'green'});
+    y += 16;
+  }
+
+  lines.push({text:'ReconARG - Diagnostico Express - Informe Tecnico - ' + new Date().toLocaleDateString('es-AR'), x:50, y:800, size:8, color:'gray'});
+
+  return generatePDF('tecnico', lines);
+}
+
+/* Express server */
+const app = express();
+app.use(express.json({ limit: '5mb' }));
+
+// Serve static files - compatible con pkg
+var publicDir;
+if (process.pkg) {
+  publicDir = path.join(path.dirname(process.execPath), 'public');
+  // Si no existe junto al exe, usar el bundleado
+  if (!fs.existsSync(publicDir)) {
+    publicDir = path.join(__dirname, 'public');
+  }
+} else {
+  publicDir = path.join(__dirname, 'public');
+}
+log('Sirviendo static desde: ' + publicDir);
+app.use(express.static(publicDir));
+
+app.get('/api/scan', async function(req, res) {
+  var domain = req.query.domain;
+  if (!domain) return res.status(400).json({ error: 'domain required' });
+  try {
+    var result = await scanDomain(domain);
+    res.json(result);
+  } catch(e) {
+    log('Scan error: ' + e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
+
+app.post('/api/pdf/ejecutivo', function(req, res) {
+  try {
+    var data = req.body;
+    var buf = buildEjecutivoPDF(data);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="informe-ejecutivo-' + data.domain + '.pdf"');
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+    log('PDF ejecutivo generado para: ' + data.domain);
+  } catch(e) {
+    log('PDF ejecutivo error: ' + e.message + '\n' + e.stack);
+    res.status(500).json({ error: 'Error generando PDF: ' + e.message });
+  }
+});
+
+app.post('/api/pdf/tecnico', function(req, res) {
+  try {
+    var data = req.body;
+    var buf = buildTecnicoPDF(data);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="informe-tecnico-' + data.domain + '.pdf"');
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+    log('PDF tecnico generado para: ' + data.domain);
+  } catch(e) {
+    log('PDF tecnico error: ' + e.message + '\n' + e.stack);
+    res.status(500).json({ error: 'Error generando PDF: ' + e.message });
+  }
+});
+
+// Health check
+app.get('/api/health', function(req, res) {
+  res.json({ status: 'ok', version: '2.0', port: PORT });
+});
+
+/* Start server */
+var server = app.listen(PORT, '127.0.0.1', function() {
+  log('Servidor corriendo en http://localhost:' + PORT);
+  openBrowser('http://localhost:' + PORT);
+});
+
+server.on('error', function(err) {
+  if (err.code === 'EADDRINUSE') {
+    log('Puerto ' + PORT + ' en uso, intentando con ' + (PORT+1));
+    var PORT2 = PORT + 1;
+    app.listen(PORT2, '127.0.0.1', function() {
+      log('Servidor corriendo en http://localhost:' + PORT2);
+      openBrowser('http://localhost:' + PORT2);
+    });
+  } else {
+    log('Error del servidor: ' + err.message);
+  }
+});
+
+function openBrowser(url) {
+  log('Abriendo browser: ' + url);
+  var platform = process.platform;
+  if (platform === 'win32') {
+    // En Windows: usar cmd /c start para abrir la URL correctamente
+    exec('cmd /c start "" "' + url + '"', function(err) {
+      if (err) {
+        log('Browser open error (win32 start): ' + err.message);
+        // Fallback: explorer
+        exec('explorer "' + url + '"', function(err2) {
+          if (err2) log('Browser open error (explorer): ' + err2.message);
+        });
+      }
+    });
+  } else if (platform === 'darwin') {
+    exec('open ' + url, function(err) { if(err) log('open error: ' + err.message); });
+  } else {
+    exec('xdg-open ' + url, function(err) {
+      if (err) exec('sensible-browser ' + url, function(){});
+    });
+  }
+}
