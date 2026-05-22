@@ -341,8 +341,8 @@ function renderResults(d) {
 
   // PDF buttons
   html += '<div class="pdf-row">';
-  html += '<button class="pdf-btn pdf-ejecutivo" onclick="downloadPDF('ejecutivo')">&#128196; Informe Ejecutivo (PDF)</button>';
-  html += '<button class="pdf-btn pdf-tecnico" onclick="downloadPDF('tecnico')">&#128202; Informe Tecnico (PDF)</button>';
+  html += '<button class="pdf-btn pdf-ejecutivo" onclick="downloadPDF(&quot;ejecutivo&quot;)">&#128196; Informe Ejecutivo (PDF)</button>';
+  html += '<button class="pdf-btn pdf-tecnico" onclick="downloadPDF(&quot;tecnico&quot;)">&#128202; Informe Tecnico (PDF)</button>';
   html += '</div>';
 
   document.getElementById('results').innerHTML = html;
@@ -402,25 +402,32 @@ async function loadUsers() {
 }
 
 function renderUsersTable(users) {
-  var tbody = document.getElementById('usersTableBody');
-  tbody.innerHTML = '';
-  users.forEach(function(u) {
-    var isMaster = u.username === 'dantepie1';
-    var isMe = u.username === CURRENT_USER;
-    var roleEl = isMaster ? '<span class="master-badge">MASTER</span>' : u.role === 'admin' ? '<span class="role-admin">Admin</span>' : '<span class="role-user">Usuario</span>';
-    var actions = '';
-    if (!isMaster && !isMe) {
-      if (u.role !== 'admin') actions += '<button class="act-btn act-promote" onclick="changeRole('' + u.username + '','admin')">Hacer Admin</button>';
-      else actions += '<button class="act-btn act-demote" onclick="changeRole('' + u.username + '','usuario')">Quitar Admin</button>';
-      actions += '<button class="act-btn act-delete" onclick="deleteUser('' + u.username + '')">Eliminar</button>';
-    } else if (isMaster) {
-      actions = '<span style="color:#555;font-size:11px">No editable</span>';
-    } else {
-      actions = '<span style="color:#555;font-size:11px">Tu cuenta</span>';
-    }
-    var tr = '<tr><td><strong>' + u.username + '</strong></td><td>' + roleEl + '</td><td style="color:#666">' + (u.created||'-') + '</td><td><div class="user-actions">' + actions + '</div></td></tr>';
-    tbody.innerHTML += tr;
-  });
+var tbody = document.getElementById('usersTableBody');
+tbody.innerHTML = '';
+users.forEach(function(u) {
+var isMaster = u.username === 'dantepie1';
+var isMe = u.username === CURRENT_USER;
+var tr = document.createElement('tr');
+var roleHtml = isMaster ? '<span class="master-badge">MASTER</span>' : u.role === 'admin' ? '<span class="role-admin">Admin</span>' : '<span class="role-user">Usuario</span>';
+tr.innerHTML = '<td><strong>' + u.username + '</strong></td><td>' + roleHtml + '</td><td style="color:#666">' + (u.created||'-') + '</td><td></td>';
+tbody.appendChild(tr);
+var actTd = tr.lastElementChild;
+if (!isMaster && !isMe) {
+var promBtn = document.createElement('button');
+promBtn.className = u.role !== 'admin' ? 'act-btn act-promote' : 'act-btn act-demote';
+promBtn.textContent = u.role !== 'admin' ? 'Hacer Admin' : 'Quitar Admin';
+var uname = u.username, urole = u.role;
+promBtn.onclick = function() { changeRole(uname, urole !== 'admin' ? 'admin' : 'usuario'); };
+actTd.appendChild(promBtn);
+var delBtn = document.createElement('button');
+delBtn.className = 'act-btn act-delete';
+delBtn.textContent = 'Eliminar';
+delBtn.onclick = (function(un) { return function() { deleteUser(un); }; })(u.username);
+actTd.appendChild(delBtn);
+} else {
+actTd.innerHTML = '<span style="color:#555;font-size:11px">' + (isMaster ? 'No editable' : 'Tu cuenta') + '</span>';
+}
+});
 }
 
 async function changeRole(username, role) {
