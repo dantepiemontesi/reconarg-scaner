@@ -6,6 +6,9 @@ on:
       - 'desktop/**'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -49,31 +52,25 @@ jobs:
         retention-days: 30
         
     - name: Create Release
-      if: github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: desktop-v${{ github.run_number }}
-        name: ReconARG Desktop v${{ github.run_number }}
+        tag_name: desktop-latest
+        name: ReconARG Desktop - Build Actual
         files: |
           desktop/dist/reconarg-diagnostico-win.exe
           desktop/dist/reconarg-diagnostico-linux
         body: |
-          ## Diagnóstico Express ReconARG - App Portable
+          ## Diagnostico Express ReconARG - App Portable
           
-          ### Descarga e instrucciones
+          ### Windows
+          Descargar reconarg-diagnostico-win.exe y doble clic para ejecutar.
           
-          **Windows:** Descargar `reconarg-diagnostico-win.exe`, doble clic para ejecutar.
-          
-          **Linux:** Descargar `reconarg-diagnostico-linux`, ejecutar:
+          ### Linux
           ```bash
           chmod +x reconarg-diagnostico-linux
           ./reconarg-diagnostico-linux
           ```
           
-          El app abre automáticamente el browser en http://localhost:3737
-          
-          ### Requisitos
-          - Conexión a internet (para el scanner)
-          - No requiere Node.js instalado (portable)
+          El app abre automaticamente el browser en http://localhost:3737
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
