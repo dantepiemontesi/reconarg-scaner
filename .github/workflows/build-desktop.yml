@@ -1,0 +1,79 @@
+name: Build ReconARG Desktop
+
+on:
+  push:
+    paths:
+      - 'desktop/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js 18
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      working-directory: desktop
+      run: npm install
+      
+    - name: Install pkg globally
+      run: npm install -g pkg
+      
+    - name: Build Windows executable
+      working-directory: desktop
+      run: pkg . --targets node18-win-x64 --output dist/reconarg-diagnostico-win.exe
+      
+    - name: Build Linux executable
+      working-directory: desktop
+      run: pkg . --targets node18-linux-x64 --output dist/reconarg-diagnostico-linux
+      
+    - name: Upload Windows build
+      uses: actions/upload-artifact@v4
+      with:
+        name: reconarg-diagnostico-win
+        path: desktop/dist/reconarg-diagnostico-win.exe
+        retention-days: 30
+        
+    - name: Upload Linux build
+      uses: actions/upload-artifact@v4
+      with:
+        name: reconarg-diagnostico-linux
+        path: desktop/dist/reconarg-diagnostico-linux
+        retention-days: 30
+        
+    - name: Create Release
+      if: github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: desktop-v${{ github.run_number }}
+        name: ReconARG Desktop v${{ github.run_number }}
+        files: |
+          desktop/dist/reconarg-diagnostico-win.exe
+          desktop/dist/reconarg-diagnostico-linux
+        body: |
+          ## Diagnóstico Express ReconARG - App Portable
+          
+          ### Descarga e instrucciones
+          
+          **Windows:** Descargar `reconarg-diagnostico-win.exe`, doble clic para ejecutar.
+          
+          **Linux:** Descargar `reconarg-diagnostico-linux`, ejecutar:
+          ```bash
+          chmod +x reconarg-diagnostico-linux
+          ./reconarg-diagnostico-linux
+          ```
+          
+          El app abre automáticamente el browser en http://localhost:3737
+          
+          ### Requisitos
+          - Conexión a internet (para el scanner)
+          - No requiere Node.js instalado (portable)
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
