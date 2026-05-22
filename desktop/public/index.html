@@ -3,342 +3,484 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Diagnóstico Express · ReconARG</title>
+<title>Diagnostico Express · ReconARG</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',Arial,sans-serif;background:#0a0a1a;color:#e0e0e0;min-height:100vh}
-.header{background:linear-gradient(135deg,#0a0a1a 0%,#1a1a2e 100%);padding:24px 40px;border-bottom:2px solid #e8c84a;display:flex;align-items:center;gap:20px}
-.logo-text{font-size:26px;font-weight:800;color:#e8c84a;letter-spacing:2px}
-.logo-sub{font-size:12px;color:#888;margin-top:2px}
+
+/* ── LOGIN SCREEN ── */
+#loginScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#0a0a1a 0%,#1a1a2e 100%)}
+.login-box{background:#12122a;border:1px solid #2a2a4a;border-radius:16px;padding:48px 40px;width:380px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.login-logo{text-align:center;margin-bottom:32px}
+.login-logo h1{color:#e8c84a;font-size:24px;font-weight:800;letter-spacing:2px}
+.login-logo p{color:#666;font-size:12px;margin-top:4px}
+.login-box label{display:block;font-size:12px;color:#888;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px}
+.login-box input{width:100%;background:#0a0a1a;border:1px solid #2a2a4a;border-radius:8px;padding:12px 16px;color:#e0e0e0;font-size:14px;outline:none;transition:border .2s;margin-bottom:20px}
+.login-box input:focus{border-color:#e8c84a}
+.login-btn{width:100%;background:#e8c84a;color:#0a0a1a;border:none;border-radius:8px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;transition:opacity .2s;margin-top:4px}
+.login-btn:hover{opacity:.85}
+.login-error{background:#2a0a0a;border:1px solid #ef4444;border-radius:8px;padding:10px 14px;color:#ef4444;font-size:13px;margin-bottom:16px;display:none}
+.login-loading{text-align:center;color:#888;font-size:13px;display:none;margin-top:12px}
+
+/* ── MAIN APP ── */
+#mainApp{display:none}
+.header{background:linear-gradient(135deg,#0a0a1a 0%,#1a1a2e 100%);padding:20px 40px;border-bottom:2px solid #e8c84a;display:flex;align-items:center;gap:20px;justify-content:space-between}
+.header-left{display:flex;align-items:center;gap:20px}
+.logo-text{font-size:22px;font-weight:800;color:#e8c84a;letter-spacing:2px}
+.logo-sub{font-size:11px;color:#888;margin-top:2px}
 .badge{background:#e8c84a;color:#0a0a1a;font-size:10px;font-weight:700;padding:3px 8px;border-radius:12px;margin-left:10px}
-.container{max-width:900px;margin:0 auto;padding:32px 20px}
-.hero{text-align:center;padding:40px 20px;background:linear-gradient(180deg,#1a1a2e 0%,#0a0a1a 100%);border-radius:16px;margin-bottom:32px;border:1px solid #2a2a3e}
-.hero h1{font-size:28px;color:#ffffff;margin-bottom:8px}
+.header-right{display:flex;align-items:center;gap:12px}
+.user-info{font-size:13px;color:#888}
+.user-info span{color:#e8c84a;font-weight:600}
+.header-btn{background:transparent;border:1px solid #333;border-radius:8px;padding:7px 14px;color:#aaa;font-size:12px;cursor:pointer;transition:all .2s}
+.header-btn:hover{border-color:#e8c84a;color:#e8c84a}
+.header-btn.danger:hover{border-color:#ef4444;color:#ef4444}
+
+.container{max-width:920px;margin:0 auto;padding:32px 20px}
+.hero{text-align:center;padding:40px 20px;background:linear-gradient(180deg,#1a1a2e 0%,#0a0a1a 100%);border-radius:16px;margin-bottom:32px;border:1px solid #2a2a3a}
+.hero h1{font-size:26px;color:#fff;margin-bottom:8px}
 .hero p{color:#888;font-size:14px;max-width:500px;margin:0 auto 24px}
-.scan-box{display:flex;gap:12px;max-width:600px;margin:0 auto}
-.scan-input{flex:1;padding:14px 20px;border-radius:10px;border:2px solid #2a2a3e;background:#111827;color:#fff;font-size:16px;outline:none;transition:border-color .2s}
+.scan-box{display:flex;gap:12px;max-width:580px;margin:0 auto}
+.scan-input{flex:1;background:#0a0a1a;border:2px solid #2a2a4a;border-radius:10px;padding:14px 20px;color:#e0e0e0;font-size:15px;outline:none;transition:border .2s}
 .scan-input:focus{border-color:#e8c84a}
-.scan-btn{padding:14px 28px;background:#e8c84a;color:#0a0a1a;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;transition:all .2s;white-space:nowrap}
-.scan-btn:hover{background:#ffd700;transform:translateY(-1px)}
-.scan-btn:disabled{opacity:0.6;cursor:not-allowed;transform:none}
-.examples{margin-top:12px;font-size:12px;color:#555}
-.examples span{color:#e8c84a;cursor:pointer;margin:0 6px}
-.examples span:hover{text-decoration:underline}
-.status-bar{padding:12px 20px;border-radius:8px;margin-bottom:20px;display:none;align-items:center;gap:10px;font-size:14px}
-.status-bar.loading{display:flex;background:#1e2d40;border:1px solid #3b82f6}
-.status-bar.error{display:flex;background:#2d1e1e;border:1px solid #ef4444;color:#fca5a5}
-.spinner{width:20px;height:20px;border:2px solid #3b82f6;border-top:2px solid transparent;border-radius:50%;animation:spin 0.8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.progress{flex:1;height:4px;background:#2a2a3e;border-radius:2px;overflow:hidden}
-.progress-bar{height:100%;background:#e8c84a;border-radius:2px;transition:width 1s ease;width:0%}
+.scan-btn{padding:14px 28px;background:#e8c84a;color:#0a0a1a;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;transition:all .2s;white-space:nowrap}
+.scan-btn:hover{background:#d4b33a;transform:scale(1.02)}
+.scan-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
 .results{display:none}
-.results.show{display:block}
-.results-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px}
-.domain-title{font-size:20px;font-weight:700;color:#e8c84a}
+.domain-header{background:#12122a;border:1px solid #2a2a3a;border-radius:12px;padding:20px 28px;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.domain-name{font-size:20px;font-weight:700;color:#e8c84a}
 .risk-badge{padding:6px 16px;border-radius:20px;font-size:12px;font-weight:700;text-transform:uppercase}
-.risk-low{background:#14532d;color:#4ade80}
-.risk-med{background:#451a03;color:#fbbf24}
-.risk-high{background:#450a0a;color:#f87171}
-.pdf-buttons{display:flex;gap:10px;flex-wrap:wrap}
-.pdf-btn{padding:10px 20px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:6px}
-.pdf-btn-exec{background:#e8c84a;color:#0a0a1a}
-.pdf-btn-tech{background:#1a1a2e;color:#e8c84a;border:1px solid #e8c84a}
-.pdf-btn:hover{opacity:0.85;transform:translateY(-1px)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px}
-.card{background:#111827;border:1px solid #1e2940;border-radius:12px;padding:20px;transition:border-color .2s}
-.card:hover{border-color:#3b82f6}
-.card-header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
-.card-icon{font-size:20px}
-.card-title{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#6b7280}
-.card-status{margin-left:auto;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px}
-.st-ok{background:#14532d;color:#4ade80}
-.st-warn{background:#451a03;color:#fbbf24}
-.st-info{background:#1e3a5f;color:#60a5fa}
-.ssl-valid{font-size:15px;font-weight:600;color:#4ade80}
-.ssl-invalid{font-size:15px;font-weight:600;color:#f87171}
-.info-row{display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #1e2940}
-.info-row:last-child{border:none}
-.info-label{color:#6b7280}
-.info-val{color:#e0e0e0;font-family:monospace}
-.check-row{display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0}
-.check-ok::before{content:"✓";color:#4ade80;font-weight:700}
-.check-fail::before{content:"✗";color:#f87171;font-weight:700}
-.port-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
-.port-tag{padding:3px 10px;border-radius:6px;font-size:11px;font-family:monospace;font-weight:600}
-.port-normal{background:#1e3a5f;color:#93c5fd}
-.port-danger{background:#450a0a;color:#fca5a5}
-.sub-list{display:flex;flex-direction:column;gap:4px;margin-top:4px;max-height:140px;overflow-y:auto}
-.sub-item{font-size:11px;font-family:monospace;color:#93c5fd;padding:2px 0}
-.breach-list{display:flex;flex-direction:column;gap:6px;margin-top:6px}
-.breach-item{background:#2d1e1e;border-radius:6px;padding:8px 12px;font-size:12px}
-.breach-name{font-weight:600;color:#fca5a5}
-.no-breach{color:#4ade80;font-size:13px;font-weight:600}
-.big-num{font-size:28px;font-weight:800;color:#e8c84a}
-.card-note{font-size:11px;color:#555;margin-top:6px}
-footer{text-align:center;padding:20px;color:#333;font-size:11px}
+.risk-bajo{background:#052e16;color:#22c55e;border:1px solid #22c55e}
+.risk-medio{background:#2d1a00;color:#f59e0b;border:1px solid #f59e0b}
+.risk-alto{background:#2a0a0a;color:#ef4444;border:1px solid #ef4444}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+@media(max-width:640px){.grid{grid-template-columns:1fr}.scan-box{flex-direction:column}}
+.card{background:#12122a;border:1px solid #2a2a3a;border-radius:12px;padding:20px}
+.card-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#666;margin-bottom:12px}
+.card-value{font-size:22px;font-weight:700;margin-bottom:4px}
+.card-sub{font-size:12px;color:#666}
+.ok{color:#22c55e}.warn{color:#f59e0b}.bad{color:#ef4444}
+.section{background:#12122a;border:1px solid #2a2a3a;border-radius:12px;padding:20px;margin-bottom:16px}
+.section-title{font-size:13px;font-weight:700;color:#e8c84a;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.tag{display:inline-block;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;margin:2px}
+.tag-open{background:#0f2a0f;color:#22c55e;border:1px solid #22c55e}
+.tag-risk{background:#2a0a0a;color:#ef4444;border:1px solid #ef4444}
+.tag-sub{background:#0a0a2a;color:#60a5fa;border:1px solid #60a5fa}
+.breach-item{background:#1a0a0a;border:1px solid #3a1a1a;border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:12px;color:#fca5a5}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:#666;font-weight:600;padding:6px 10px;border-bottom:1px solid #2a2a3a}
+td{padding:8px 10px;border-bottom:1px solid #1a1a2a;vertical-align:middle}
+.pdf-row{display:flex;gap:12px;margin-top:16px;justify-content:center;flex-wrap:wrap}
+.pdf-btn{padding:12px 24px;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;transition:all .2s}
+.pdf-ejecutivo{background:#1a2a1a;color:#22c55e;border:1px solid #22c55e}
+.pdf-ejecutivo:hover{background:#22c55e;color:#0a0a1a}
+.pdf-tecnico{background:#1a1a2a;color:#60a5fa;border:1px solid #60a5fa}
+.pdf-tecnico:hover{background:#60a5fa;color:#0a0a1a}
+.scanning{text-align:center;padding:60px 20px;display:none}
+.spin{width:48px;height:48px;border:3px solid #2a2a4a;border-top-color:#e8c84a;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── USERS PANEL ── */
+#usersPanel{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center}
+#usersPanel.open{display:flex}
+.panel-box{background:#12122a;border:1px solid #2a2a4a;border-radius:16px;width:620px;max-width:95vw;max-height:85vh;overflow:hidden;display:flex;flex-direction:column}
+.panel-header{padding:20px 24px;border-bottom:1px solid #2a2a3a;display:flex;align-items:center;justify-content:space-between}
+.panel-header h2{color:#e8c84a;font-size:16px;font-weight:700}
+.panel-close{background:none;border:none;color:#666;font-size:20px;cursor:pointer;padding:4px 8px;border-radius:6px}
+.panel-close:hover{color:#fff;background:#2a2a3a}
+.panel-body{padding:20px 24px;overflow-y:auto;flex:1}
+.users-table{width:100%;border-collapse:collapse;margin-bottom:24px}
+.users-table th{text-align:left;color:#666;font-size:11px;text-transform:uppercase;letter-spacing:1px;padding:8px 10px;border-bottom:1px solid #2a2a3a}
+.users-table td{padding:10px;border-bottom:1px solid #1a1a2a;font-size:13px;vertical-align:middle}
+.role-admin{background:#2d1a00;color:#f59e0b;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700}
+.role-user{background:#0a0a2a;color:#60a5fa;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700}
+.master-badge{background:#1a1a0a;color:#e8c84a;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;border:1px solid #e8c84a}
+.user-actions{display:flex;gap:6px}
+.act-btn{padding:4px 10px;border-radius:6px;border:none;font-size:11px;font-weight:600;cursor:pointer;transition:all .2s}
+.act-promote{background:#1a1a0a;color:#e8c84a;border:1px solid #e8c84a}
+.act-promote:hover{background:#e8c84a;color:#0a0a1a}
+.act-demote{background:#1a0a0a;color:#888;border:1px solid #444}
+.act-demote:hover{background:#333;color:#fff}
+.act-delete{background:#1a0000;color:#ef4444;border:1px solid #ef4444}
+.act-delete:hover{background:#ef4444;color:#fff}
+.add-user-form{background:#0a0a1a;border:1px solid #2a2a3a;border-radius:12px;padding:20px}
+.add-user-form h3{color:#e0e0e0;font-size:14px;font-weight:700;margin-bottom:16px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.form-group{display:flex;flex-direction:column;gap:6px}
+.form-group label{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px}
+.form-group input,.form-group select{background:#12122a;border:1px solid #2a2a4a;border-radius:8px;padding:10px 14px;color:#e0e0e0;font-size:13px;outline:none}
+.form-group input:focus,.form-group select:focus{border-color:#e8c84a}
+.form-group select option{background:#12122a}
+.add-btn{width:100%;background:#e8c84a;color:#0a0a1a;border:none;border-radius:8px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;transition:opacity .2s}
+.add-btn:hover{opacity:.85}
+.panel-msg{padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:12px;display:none}
+.panel-msg.ok{background:#052e16;color:#22c55e;border:1px solid #22c55e}
+.panel-msg.err{background:#2a0a0a;color:#ef4444;border:1px solid #ef4444}
 </style>
 </head>
 <body>
-<div class="header">
-  <div>
-    <div class="logo-text">ReconARG <span class="badge">DESKTOP</span></div>
-    <div class="logo-sub">Diagnóstico Express de Seguridad · v1.0</div>
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">
+      <h1>&#128274; RECONARG</h1>
+      <p>Diagnostico Express · Acceso Seguro</p>
+    </div>
+    <div class="login-error" id="loginError"></div>
+    <label for="loginUser">Usuario</label>
+    <input type="text" id="loginUser" placeholder="usuario" autocomplete="username" autocapitalize="none">
+    <label for="loginPass">Contrasena</label>
+    <input type="password" id="loginPass" placeholder="••••••••" autocomplete="current-password">
+    <button class="login-btn" onclick="doLogin()">Ingresar</button>
+    <div class="login-loading" id="loginLoading">Verificando...</div>
   </div>
 </div>
-<div class="container">
-  <div class="hero">
-    <h1>¿Qué tan expuesto está su dominio?</h1>
-    <p>Análisis completo en segundos: SSL · DNS · Puertos · Subdominios · Filtraciones</p>
-    <div class="scan-box">
-      <input class="scan-input" id="domInput" type="text" placeholder="empresa.com.ar" />
-      <button class="scan-btn" id="scanBtn" onclick="startScan()">Analizar →</button>
-    </div>
-    <div class="examples">
-      Ejemplos:
-      <span onclick="setDomain('clarin.com')">clarin.com</span>
-      <span onclick="setDomain('mercadolibre.com.ar')">mercadolibre.com.ar</span>
-      <span onclick="setDomain('lanacion.com.ar')">lanacion.com.ar</span>
-    </div>
-  </div>
-  <div class="status-bar" id="statusBar">
-    <div class="spinner"></div>
-    <div id="statusText" style="flex:1">Analizando...</div>
-    <div class="progress" style="width:200px"><div class="progress-bar" id="progressBar"></div></div>
-  </div>
-  <div class="results" id="results">
-    <div class="results-header">
+
+<!-- MAIN APP -->
+<div id="mainApp">
+  <div class="header">
+    <div class="header-left">
       <div>
-        <div style="font-size:12px;color:#555;margin-bottom:4px">ANÁLISIS DE</div>
-        <div class="domain-title" id="resTitle"></div>
-      </div>
-      <div id="riskBadge" class="risk-badge"></div>
-      <div class="pdf-buttons">
-        <button class="pdf-btn pdf-btn-exec" onclick="downloadPDF('ejecutivo')">📄 Informe Ejecutivo</button>
-        <button class="pdf-btn pdf-btn-tech" onclick="downloadPDF('tecnico')">🔧 Informe Técnico</button>
+        <div class="logo-text">RECONARG <span class="badge">EXPRESS</span></div>
+        <div class="logo-sub">Diagnostico de Seguridad · Portatil</div>
       </div>
     </div>
-    <div class="grid">
-      <!-- SSL Card -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-icon">🔒</span>
-          <span class="card-title">SSL / TLS</span>
-          <span class="card-status" id="sslSt"></span>
-        </div>
-        <div id="sslBody"></div>
+    <div class="header-right">
+      <div class="user-info">Sesion: <span id="headerUser">-</span> <span id="headerRole" style="font-size:10px;color:#666"></span></div>
+      <button class="header-btn" id="btnUsers" onclick="openUsersPanel()" style="display:none">&#128100; Usuarios</button>
+      <button class="header-btn danger" onclick="doLogout()">Cerrar sesion</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="hero">
+      <h1>Analisis de Superficie de Ataque</h1>
+      <p>Ingresa un dominio para obtener un diagnostico completo de seguridad en segundos.</p>
+      <div class="scan-box">
+        <input type="text" class="scan-input" id="domainInput" placeholder="ej: miempresa.com.ar" onkeypress="if(event.key==='Enter') startScan()">
+        <button class="scan-btn" id="scanBtn" onclick="startScan()">Escanear</button>
       </div>
-      <!-- DNS Card -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-icon">📧</span>
-          <span class="card-title">Seguridad Email</span>
-          <span class="card-status" id="dnsSt"></span>
+    </div>
+
+    <div class="scanning" id="scanning">
+      <div class="spin"></div>
+      <div style="color:#e8c84a;font-weight:700;font-size:16px">Analizando dominio...</div>
+      <div style="color:#666;font-size:13px;margin-top:8px">SSL · DNS · Puertos · Subdominios · Filtraciones</div>
+    </div>
+
+    <div class="results" id="results"></div>
+  </div>
+</div>
+
+<!-- USERS PANEL -->
+<div id="usersPanel">
+  <div class="panel-box">
+    <div class="panel-header">
+      <h2>&#128100; Gestion de Usuarios</h2>
+      <button class="panel-close" onclick="closeUsersPanel()">&#10005;</button>
+    </div>
+    <div class="panel-body">
+      <div class="panel-msg" id="panelMsg"></div>
+      <table class="users-table">
+        <thead><tr><th>Usuario</th><th>Rol</th><th>Creado</th><th>Acciones</th></tr></thead>
+        <tbody id="usersTableBody"></tbody>
+      </table>
+      <div class="add-user-form">
+        <h3>+ Agregar Usuario</h3>
+        <div class="form-row">
+          <div class="form-group"><label>Usuario</label><input type="text" id="newUsername" placeholder="nombre de usuario" autocapitalize="none"></div>
+          <div class="form-group"><label>Contrasena</label><input type="password" id="newPassword" placeholder="minimo 6 caracteres"></div>
         </div>
-        <div id="dnsBody"></div>
-      </div>
-      <!-- Ports Card -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-icon">🌐</span>
-          <span class="card-title">Puertos Abiertos</span>
-          <span class="card-status" id="portSt"></span>
+        <div class="form-group" style="margin-bottom:0">
+          <label>Rol</label>
+          <select id="newRole">
+            <option value="usuario">Usuario</option>
+            <option value="admin">Administrador</option>
+          </select>
         </div>
-        <div id="portBody"></div>
-      </div>
-      <!-- Subdomains Card -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-icon">🔍</span>
-          <span class="card-title">Subdominios</span>
-          <span class="card-status" id="subSt"></span>
-        </div>
-        <div id="subBody"></div>
-      </div>
-      <!-- Breaches Card - full width -->
-      <div class="card" style="grid-column:1/-1">
-        <div class="card-header">
-          <span class="card-icon">💧</span>
-          <span class="card-title">Filtraciones de Datos · HIBP</span>
-          <span class="card-status" id="breachSt"></span>
-        </div>
-        <div id="breachBody"></div>
+        <button class="add-btn" onclick="addUser()">Crear Usuario</button>
       </div>
     </div>
   </div>
 </div>
-<footer>ReconARG · Diagnóstico Express Desktop · Los datos son informativos y no reemplazan una auditoría completa.</footer>
 
 <script>
+var TOKEN = null;
+var CURRENT_USER = null;
+var CURRENT_ROLE = null;
 var scanData = null;
 
-function setDomain(d) {
-  document.getElementById('domInput').value = d;
+// ── AUTH ──
+
+async function doLogin() {
+  var u = document.getElementById('loginUser').value.trim();
+  var p = document.getElementById('loginPass').value;
+  var errEl = document.getElementById('loginError');
+  var loadEl = document.getElementById('loginLoading');
+  errEl.style.display = 'none';
+  loadEl.style.display = 'block';
+  try {
+    var r = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ username: u, password: p })
+    });
+    var data = await r.json();
+    if (!r.ok) { loadEl.style.display='none'; errEl.textContent = data.error || 'Error de autenticacion'; errEl.style.display='block'; return; }
+    TOKEN = data.token;
+    CURRENT_USER = data.username;
+    CURRENT_ROLE = data.role;
+    document.getElementById('headerUser').textContent = data.username;
+    document.getElementById('headerRole').textContent = '(' + data.role + ')';
+    if (data.role === 'admin') document.getElementById('btnUsers').style.display = 'inline-block';
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'block';
+    document.getElementById('loginPass').value = '';
+    loadEl.style.display = 'none';
+  } catch(e) {
+    loadEl.style.display = 'none';
+    errEl.textContent = 'Error de conexion con el servidor';
+    errEl.style.display = 'block';
+  }
 }
 
-function startScan() {
-  var domain = document.getElementById('domInput').value.trim();
+async function doLogout() {
+  try { await fetch('/api/auth/logout', { method:'POST', headers:{'x-auth-token':TOKEN} }); } catch(e) {}
+  TOKEN = null; CURRENT_USER = null; CURRENT_ROLE = null; scanData = null;
+  document.getElementById('mainApp').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginUser').value = '';
+  document.getElementById('loginPass').value = '';
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('btnUsers').style.display = 'none';
+}
+
+document.getElementById('loginPass').addEventListener('keypress', function(e) {
+  if (e.key === 'Enter') doLogin();
+});
+
+// ── SCAN ──
+
+async function startScan() {
+  var domain = document.getElementById('domainInput').value.trim();
   if (!domain) return;
-  
-  var btn = document.getElementById('scanBtn');
-  var bar = document.getElementById('statusBar');
-  var prog = document.getElementById('progressBar');
-  var statusText = document.getElementById('statusText');
-  var results = document.getElementById('results');
-  
-  btn.disabled = true;
-  bar.className = 'status-bar loading';
-  statusText.textContent = 'Resolviendo DNS y analizando ' + domain + '...';
-  results.className = 'results';
-  prog.style.width = '15%';
-  
-  var progInterval = setInterval(function() {
-    var curr = parseFloat(prog.style.width) || 15;
-    if (curr < 85) prog.style.width = (curr + 8) + '%';
-  }, 800);
-  
-  fetch('/api/scan?domain=' + encodeURIComponent(domain))
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      clearInterval(progInterval);
-      prog.style.width = '100%';
-      scanData = data;
-      setTimeout(function() {
-        bar.className = 'status-bar';
-        btn.disabled = false;
-        renderResults(data);
-      }, 400);
-    })
-    .catch(function(e) {
-      clearInterval(progInterval);
-      bar.className = 'status-bar error';
-      statusText.textContent = 'Error: ' + e.message;
-      btn.disabled = false;
+  document.getElementById('scanning').style.display = 'block';
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('scanBtn').disabled = true;
+  try {
+    var r = await fetch('/api/scan?domain=' + encodeURIComponent(domain), {
+      headers: { 'x-auth-token': TOKEN }
     });
+    if (r.status === 401) { doLogout(); return; }
+    scanData = await r.json();
+    renderResults(scanData);
+  } catch(e) {
+    document.getElementById('results').innerHTML = '<div style="color:#ef4444;padding:20px">Error al escanear: ' + e.message + '</div>';
+    document.getElementById('results').style.display = 'block';
+  }
+  document.getElementById('scanning').style.display = 'none';
+  document.getElementById('scanBtn').disabled = false;
 }
 
 function renderResults(d) {
-  var results = document.getElementById('results');
-  results.className = 'results show';
-  document.getElementById('resTitle').textContent = d.domain;
-  
   var score = calcScore(d);
-  var rb = document.getElementById('riskBadge');
-  if (score <= 30) { rb.className = 'risk-badge risk-low'; rb.textContent = 'Riesgo Bajo'; }
-  else if (score <= 60) { rb.className = 'risk-badge risk-med'; rb.textContent = 'Riesgo Medio'; }
-  else { rb.className = 'risk-badge risk-high'; rb.textContent = 'Riesgo Alto'; }
-  
-  // SSL
-  var ssl = d.ssl || {};
-  document.getElementById('sslSt').className = 'card-status ' + (ssl.valid ? 'st-ok' : 'st-warn');
-  document.getElementById('sslSt').textContent = ssl.valid ? 'VÁLIDO' : 'PROBLEMA';
-  var sslHtml = ssl.valid
-    ? '<div class="ssl-valid">✓ Certificado válido</div>'
-    : '<div class="ssl-invalid">✗ Sin certificado o inválido</div>';
-  sslHtml += '<div style="margin-top:10px">';
-  sslHtml += '<div class="info-row"><span class="info-label">Emisor</span><span class="info-val">' + (ssl.issuer||'N/A') + '</span></div>';
-  sslHtml += '<div class="info-row"><span class="info-label">Vence</span><span class="info-val">' + (ssl.expires||'N/A') + '</span></div>';
-  sslHtml += '<div class="info-row"><span class="info-label">Días restantes</span><span class="info-val">' + (ssl.days_remaining!==null?ssl.days_remaining:'N/A') + '</span></div>';
-  sslHtml += '</div>';
-  document.getElementById('sslBody').innerHTML = sslHtml;
-  
-  // DNS
-  var dns = d.dns || {};
-  var dnsOk = dns.spf && dns.dmarc;
-  document.getElementById('dnsSt').className = 'card-status ' + (dnsOk ? 'st-ok' : 'st-warn');
-  document.getElementById('dnsSt').textContent = dnsOk ? 'PROTEGIDO' : 'REVISAR';
-  var dnsHtml = '<div class="check-row ' + (dns.spf?'check-ok':'check-fail') + '"> SPF ' + (dns.spf?'configurado':'ausente — riesgo spoofing') + '</div>';
-  dnsHtml += '<div class="check-row ' + (dns.dmarc?'check-ok':'check-fail') + '"> DMARC ' + (dns.dmarc?'configurado':'ausente — sin política') + '</div>';
-  if (dns.mx) dnsHtml += '<div style="margin-top:8px;font-size:11px;color:#555">MX: <span style="color:#93c5fd">' + dns.mx + '</span></div>';
-  document.getElementById('dnsBody').innerHTML = dnsHtml;
-  
+  var riskLabel = score <= 30 ? 'BAJO' : score <= 60 ? 'MEDIO' : 'ALTO';
+  var riskClass = 'risk-' + riskLabel.toLowerCase();
+  var fecha = new Date(d.timestamp).toLocaleString('es-AR');
+
+  var html = '<div class="domain-header">';
+  html += '<div><div class="domain-name">' + d.domain + '</div><div style="font-size:12px;color:#666;margin-top:4px">' + fecha + '</div></div>';
+  html += '<div class="risk-badge ' + riskClass + '">Riesgo ' + riskLabel + ' &mdash; ' + score + '/100</div>';
+  html += '</div>';
+
+  html += '<div class="grid">';
+  html += card('SSL/TLS', d.ssl && d.ssl.valid ? '<span class="ok">&check; Valido</span>' : '<span class="bad">&times; Invalido</span>', d.ssl && d.ssl.valid ? (d.ssl.days_remaining + ' dias restantes') : 'Sin certificado valido');
+  html += card('Email', d.dns && d.dns.spf && d.dns.dmarc ? '<span class="ok">&check; SPF + DMARC</span>' : '<span class="warn">&#9888; Incompleto</span>', 'SPF: '+(d.dns&&d.dns.spf?'Si':'No')+' &nbsp; DMARC: '+(d.dns&&d.dns.dmarc?'Si':'No'));
+  html += card('Puertos', '<span class="' + (d.ports&&d.ports.ports&&d.ports.ports.length>0?'warn':'ok') + '">' + (d.ports&&d.ports.ports?d.ports.ports.length:0) + '</span>', 'puertos abiertos detectados');
+  html += card('Filtraciones', '<span class="' + (d.breaches&&d.breaches.count>0?'bad':'ok') + '">' + (d.breaches?d.breaches.count:0) + '</span>', d.breaches&&d.breaches.count>0?'filtracion(es) en HIBP':'Sin filtraciones conocidas');
+  html += '</div>';
+
+  // SSL detail
+  if (d.ssl) {
+    html += '<div class="section"><div class="section-title">&#128274; Certificado SSL/TLS</div>';
+    html += '<table><tr><th>Estado</th><th>Emisor</th><th>Vencimiento</th><th>Dias</th></tr>';
+    html += '<tr><td class="'+(d.ssl.valid?'ok':'bad')+'">'+(d.ssl.valid?'Valido':'Invalido')+'</td><td>'+(d.ssl.issuer||'-')+'</td><td>'+(d.ssl.expires||'-')+'</td><td class="'+(d.ssl.days_remaining>30?'ok':d.ssl.days_remaining>0?'warn':'bad')+'">'+(d.ssl.days_remaining||'-')+'</td></tr>';
+    html += '</table></div>';
+  }
+
   // Ports
-  var ports = (d.ports && d.ports.ports) || [];
-  var highRisk = [21,23,445,3389,6379,27017];
-  var danger = ports.filter(function(p){return highRisk.includes(p.port);});
-  document.getElementById('portSt').className = 'card-status ' + (danger.length>0?'st-warn':'st-ok');
-  document.getElementById('portSt').textContent = ports.length + ' ABIERTOS';
-  var portHtml = '<div class="big-num">' + ports.length + '</div>';
-  portHtml += '<div class="card-note">Puerto' + (ports.length!==1?'s':'') + ' detectado' + (ports.length!==1?'s':'') + ' por Shodan</div>';
-  if (ports.length > 0) {
-    portHtml += '<div class="port-list">';
-    ports.forEach(function(p) {
-      var isDanger = highRisk.includes(p.port);
-      portHtml += '<span class="port-tag ' + (isDanger?'port-danger':'port-normal') + '">' + p.port + '/' + p.service + '</span>';
+  if (d.ports && d.ports.ports && d.ports.ports.length > 0) {
+    html += '<div class="section"><div class="section-title">&#128268; Puertos Abiertos (Shodan InternetDB) &mdash; IP: ' + (d.ports.ip||'?') + '</div>';
+    html += '<table><tr><th>Puerto</th><th>Servicio</th><th>Riesgo</th></tr>';
+    var hr = [21,23,445,3389,6379,27017];
+    d.ports.ports.forEach(function(p) {
+      var isHR = hr.includes(p.port);
+      html += '<tr><td>' + p.port + '</td><td>' + p.service + '</td><td class="'+(isHR?'bad':'ok')+'">'+(isHR?'&#9888; Alto Riesgo':'Normal')+'</td></tr>';
     });
-    portHtml += '</div>';
+    html += '</table>';
+    if (d.ports.vulns && d.ports.vulns.length > 0) html += '<div style="margin-top:10px;color:#ef4444;font-size:12px">CVEs: ' + d.ports.vulns.join(', ') + '</div>';
+    html += '</div>';
   }
-  document.getElementById('portBody').innerHTML = portHtml;
-  
+
   // Subdomains
-  var subs = Array.isArray(d.subdomains) ? d.subdomains : [];
-  document.getElementById('subSt').className = 'card-status st-info';
-  document.getElementById('subSt').textContent = subs.length + ' ENCONTRADOS';
-  var subHtml = '<div class="big-num">' + subs.length + '</div>';
-  if (subs.length > 0) {
-    subHtml += '<div class="sub-list">';
-    subs.forEach(function(s){ subHtml += '<div class="sub-item">• ' + s + '</div>'; });
-    subHtml += '</div>';
-  } else {
-    subHtml += '<div class="card-note">Sin subdominios detectados en crt.sh</div>';
+  if (d.subdomains && d.subdomains.length > 0) {
+    html += '<div class="section"><div class="section-title">&#127760; Subdominios (crt.sh)</div><div>';
+    d.subdomains.forEach(function(s) { html += '<span class="tag tag-sub">' + s + '</span>'; });
+    html += '</div></div>';
   }
-  document.getElementById('subBody').innerHTML = subHtml;
-  
+
   // Breaches
-  var b = d.breaches || {count:0, breaches:[]};
-  document.getElementById('breachSt').className = 'card-status ' + (b.count>0?'st-warn':'st-ok');
-  document.getElementById('breachSt').textContent = b.count>0 ? b.count + ' FILTRACIÓN(ES)' : 'SIN FILTRACIONES';
-  var bHtml = '';
-  if (b.count > 0) {
-    bHtml = '<div style="color:#f87171;font-size:14px;font-weight:600;margin-bottom:8px">⚠ ' + b.count + ' filtración(es) detectada(s)</div>';
-    bHtml += '<div class="breach-list">';
-    (b.breaches||[]).slice(0,5).forEach(function(br){
-      bHtml += '<div class="breach-item"><span class="breach-name">' + (typeof br==='string'?br:JSON.stringify(br)) + '</span></div>';
-    });
-    if (b.count > 5) bHtml += '<div style="font-size:11px;color:#555;margin-top:4px">... y ' + (b.count-5) + ' más</div>';
-    bHtml += '</div>';
-  } else {
-    bHtml = '<div class="no-breach">✓ Sin filtraciones detectadas en la base de datos Have I Been Pwned</div>';
-    bHtml += '<div class="card-note" style="margin-top:8px">Base de datos con miles de millones de registros comprometidos</div>';
+  if (d.breaches && d.breaches.count > 0) {
+    html += '<div class="section"><div class="section-title">&#128683; Filtraciones de Datos (HIBP)</div>';
+    if (Array.isArray(d.breaches.breaches)) d.breaches.breaches.forEach(function(b) { html += '<div class="breach-item">' + (typeof b==='string'?b:JSON.stringify(b)) + '</div>'; });
+    html += '</div>';
   }
-  document.getElementById('breachBody').innerHTML = bHtml;
+
+  // PDF buttons
+  html += '<div class="pdf-row">';
+  html += '<button class="pdf-btn pdf-ejecutivo" onclick="downloadPDF('ejecutivo')">&#128196; Informe Ejecutivo (PDF)</button>';
+  html += '<button class="pdf-btn pdf-tecnico" onclick="downloadPDF('tecnico')">&#128202; Informe Tecnico (PDF)</button>';
+  html += '</div>';
+
+  document.getElementById('results').innerHTML = html;
+  document.getElementById('results').style.display = 'block';
+}
+
+function card(title, value, sub) {
+  return '<div class="card"><div class="card-title">' + title + '</div><div class="card-value">' + value + '</div><div class="card-sub">' + sub + '</div></div>';
 }
 
 function calcScore(d) {
   var s = 0;
-  if (!d.ssl || !d.ssl.valid) s += 25;
-  else if (d.ssl.days_remaining < 30) s += 10;
+  if (!d.ssl || !d.ssl.valid) s += 25; else if (d.ssl.days_remaining < 30) s += 10;
   if (!d.dns || !d.dns.spf) s += 10;
   if (!d.dns || !d.dns.dmarc) s += 10;
   var hr = [21,23,445,3389,6379,27017];
-  if (d.ports && d.ports.ports) {
-    var dang = d.ports.ports.filter(function(p){return hr.includes(p.port);});
-    s += dang.length * 8;
-  }
-  if (d.breaches && d.breaches.count > 0) s += Math.min(d.breaches.count * 5, 25);
+  if (d.ports && d.ports.ports) { var dn = d.ports.ports.filter(function(p){return hr.includes(p.port);}); s += dn.length*8; }
+  if (d.breaches && d.breaches.count > 0) s += Math.min(d.breaches.count*5, 25);
   return Math.min(s, 100);
 }
 
-function downloadPDF(type) {
+async function downloadPDF(type) {
   if (!scanData) return;
-  fetch('/api/pdf/' + type, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(scanData)
-  })
-  .then(function(r) { return r.blob(); })
-  .then(function(blob) {
+  try {
+    var r = await fetch('/api/pdf/' + type, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-auth-token': TOKEN },
+      body: JSON.stringify(scanData)
+    });
+    if (!r.ok) { alert('Error generando PDF'); return; }
+    var blob = await r.blob();
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
-    a.href = url;
-    a.download = 'informe-' + type + '-' + scanData.domain + '.pdf';
-    a.click();
-    URL.revokeObjectURL(url);
-  })
-  .catch(function(e) { alert('Error generando PDF: ' + e.message); });
+    a.href = url; a.download = 'informe-' + type + '-' + scanData.domain + '.pdf';
+    a.click(); URL.revokeObjectURL(url);
+  } catch(e) { alert('Error: ' + e.message); }
 }
 
-document.getElementById('domInput').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') startScan();
+// ── USERS PANEL ──
+
+async function openUsersPanel() {
+  document.getElementById('usersPanel').classList.add('open');
+  await loadUsers();
+}
+
+function closeUsersPanel() {
+  document.getElementById('usersPanel').classList.remove('open');
+}
+
+async function loadUsers() {
+  try {
+    var r = await fetch('/api/users', { headers: { 'x-auth-token': TOKEN } });
+    if (!r.ok) return;
+    var users = await r.json();
+    renderUsersTable(users);
+  } catch(e) {}
+}
+
+function renderUsersTable(users) {
+  var tbody = document.getElementById('usersTableBody');
+  tbody.innerHTML = '';
+  users.forEach(function(u) {
+    var isMaster = u.username === 'dantepie1';
+    var isMe = u.username === CURRENT_USER;
+    var roleEl = isMaster ? '<span class="master-badge">MASTER</span>' : u.role === 'admin' ? '<span class="role-admin">Admin</span>' : '<span class="role-user">Usuario</span>';
+    var actions = '';
+    if (!isMaster && !isMe) {
+      if (u.role !== 'admin') actions += '<button class="act-btn act-promote" onclick="changeRole('' + u.username + '','admin')">Hacer Admin</button>';
+      else actions += '<button class="act-btn act-demote" onclick="changeRole('' + u.username + '','usuario')">Quitar Admin</button>';
+      actions += '<button class="act-btn act-delete" onclick="deleteUser('' + u.username + '')">Eliminar</button>';
+    } else if (isMaster) {
+      actions = '<span style="color:#555;font-size:11px">No editable</span>';
+    } else {
+      actions = '<span style="color:#555;font-size:11px">Tu cuenta</span>';
+    }
+    var tr = '<tr><td><strong>' + u.username + '</strong></td><td>' + roleEl + '</td><td style="color:#666">' + (u.created||'-') + '</td><td><div class="user-actions">' + actions + '</div></td></tr>';
+    tbody.innerHTML += tr;
+  });
+}
+
+async function changeRole(username, role) {
+  try {
+    var r = await fetch('/api/users/' + username + '/role', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-auth-token': TOKEN },
+      body: JSON.stringify({ role: role })
+    });
+    var d = await r.json();
+    if (!r.ok) { showPanelMsg(d.error, 'err'); return; }
+    showPanelMsg('Rol actualizado: ' + username + ' -> ' + role, 'ok');
+    await loadUsers();
+  } catch(e) { showPanelMsg('Error: ' + e.message, 'err'); }
+}
+
+async function deleteUser(username) {
+  if (!confirm('Eliminar usuario "' + username + '"? Esta accion no se puede deshacer.')) return;
+  try {
+    var r = await fetch('/api/users/' + username, {
+      method: 'DELETE', headers: { 'x-auth-token': TOKEN }
+    });
+    var d = await r.json();
+    if (!r.ok) { showPanelMsg(d.error, 'err'); return; }
+    showPanelMsg('Usuario eliminado: ' + username, 'ok');
+    await loadUsers();
+  } catch(e) { showPanelMsg('Error: ' + e.message, 'err'); }
+}
+
+async function addUser() {
+  var username = document.getElementById('newUsername').value.trim();
+  var password = document.getElementById('newPassword').value;
+  var role = document.getElementById('newRole').value;
+  if (!username || !password) { showPanelMsg('Completa usuario y contrasena', 'err'); return; }
+  try {
+    var r = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-auth-token': TOKEN },
+      body: JSON.stringify({ username: username, password: password, role: role })
+    });
+    var d = await r.json();
+    if (!r.ok) { showPanelMsg(d.error, 'err'); return; }
+    showPanelMsg('Usuario creado: ' + username + ' (' + role + ')', 'ok');
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newPassword').value = '';
+    await loadUsers();
+  } catch(e) { showPanelMsg('Error: ' + e.message, 'err'); }
+}
+
+function showPanelMsg(msg, type) {
+  var el = document.getElementById('panelMsg');
+  el.textContent = msg;
+  el.className = 'panel-msg ' + type;
+  el.style.display = 'block';
+  setTimeout(function() { el.style.display = 'none'; }, 4000);
+}
+
+// Cerrar panel con Escape
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeUsersPanel();
 });
 </script>
 </body>
