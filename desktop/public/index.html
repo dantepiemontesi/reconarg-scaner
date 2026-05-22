@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diagnóstico Express · ReconARG</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#0a0a1a;color:#e0e0e0;min-height:100vh}
+.header{background:linear-gradient(135deg,#0a0a1a 0%,#1a1a2e 100%);padding:24px 40px;border-bottom:2px solid #e8c84a;display:flex;align-items:center;gap:20px}
+.logo-text{font-size:26px;font-weight:800;color:#e8c84a;letter-spacing:2px}
+.logo-sub{font-size:12px;color:#888;margin-top:2px}
+.badge{background:#e8c84a;color:#0a0a1a;font-size:10px;font-weight:700;padding:3px 8px;border-radius:12px;margin-left:10px}
+.container{max-width:900px;margin:0 auto;padding:32px 20px}
+.hero{text-align:center;padding:40px 20px;background:linear-gradient(180deg,#1a1a2e 0%,#0a0a1a 100%);border-radius:16px;margin-bottom:32px;border:1px solid #2a2a3e}
+.hero h1{font-size:28px;color:#ffffff;margin-bottom:8px}
+.hero p{color:#888;font-size:14px;max-width:500px;margin:0 auto 24px}
+.scan-box{display:flex;gap:12px;max-width:600px;margin:0 auto}
+.scan-input{flex:1;padding:14px 20px;border-radius:10px;border:2px solid #2a2a3e;background:#111827;color:#fff;font-size:16px;outline:none;transition:border-color .2s}
+.scan-input:focus{border-color:#e8c84a}
+.scan-btn{padding:14px 28px;background:#e8c84a;color:#0a0a1a;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;transition:all .2s;white-space:nowrap}
+.scan-btn:hover{background:#ffd700;transform:translateY(-1px)}
+.scan-btn:disabled{opacity:0.6;cursor:not-allowed;transform:none}
+.examples{margin-top:12px;font-size:12px;color:#555}
+.examples span{color:#e8c84a;cursor:pointer;margin:0 6px}
+.examples span:hover{text-decoration:underline}
+.status-bar{padding:12px 20px;border-radius:8px;margin-bottom:20px;display:none;align-items:center;gap:10px;font-size:14px}
+.status-bar.loading{display:flex;background:#1e2d40;border:1px solid #3b82f6}
+.status-bar.error{display:flex;background:#2d1e1e;border:1px solid #ef4444;color:#fca5a5}
+.spinner{width:20px;height:20px;border:2px solid #3b82f6;border-top:2px solid transparent;border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.progress{flex:1;height:4px;background:#2a2a3e;border-radius:2px;overflow:hidden}
+.progress-bar{height:100%;background:#e8c84a;border-radius:2px;transition:width 1s ease;width:0%}
+.results{display:none}
+.results.show{display:block}
+.results-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px}
+.domain-title{font-size:20px;font-weight:700;color:#e8c84a}
+.risk-badge{padding:6px 16px;border-radius:20px;font-size:12px;font-weight:700;text-transform:uppercase}
+.risk-low{background:#14532d;color:#4ade80}
+.risk-med{background:#451a03;color:#fbbf24}
+.risk-high{background:#450a0a;color:#f87171}
+.pdf-buttons{display:flex;gap:10px;flex-wrap:wrap}
+.pdf-btn{padding:10px 20px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:6px}
+.pdf-btn-exec{background:#e8c84a;color:#0a0a1a}
+.pdf-btn-tech{background:#1a1a2e;color:#e8c84a;border:1px solid #e8c84a}
+.pdf-btn:hover{opacity:0.85;transform:translateY(-1px)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px}
+.card{background:#111827;border:1px solid #1e2940;border-radius:12px;padding:20px;transition:border-color .2s}
+.card:hover{border-color:#3b82f6}
+.card-header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.card-icon{font-size:20px}
+.card-title{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#6b7280}
+.card-status{margin-left:auto;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px}
+.st-ok{background:#14532d;color:#4ade80}
+.st-warn{background:#451a03;color:#fbbf24}
+.st-info{background:#1e3a5f;color:#60a5fa}
+.ssl-valid{font-size:15px;font-weight:600;color:#4ade80}
+.ssl-invalid{font-size:15px;font-weight:600;color:#f87171}
+.info-row{display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid #1e2940}
+.info-row:last-child{border:none}
+.info-label{color:#6b7280}
+.info-val{color:#e0e0e0;font-family:monospace}
+.check-row{display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0}
+.check-ok::before{content:"✓";color:#4ade80;font-weight:700}
+.check-fail::before{content:"✗";color:#f87171;font-weight:700}
+.port-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.port-tag{padding:3px 10px;border-radius:6px;font-size:11px;font-family:monospace;font-weight:600}
+.port-normal{background:#1e3a5f;color:#93c5fd}
+.port-danger{background:#450a0a;color:#fca5a5}
+.sub-list{display:flex;flex-direction:column;gap:4px;margin-top:4px;max-height:140px;overflow-y:auto}
+.sub-item{font-size:11px;font-family:monospace;color:#93c5fd;padding:2px 0}
+.breach-list{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.breach-item{background:#2d1e1e;border-radius:6px;padding:8px 12px;font-size:12px}
+.breach-name{font-weight:600;color:#fca5a5}
+.no-breach{color:#4ade80;font-size:13px;font-weight:600}
+.big-num{font-size:28px;font-weight:800;color:#e8c84a}
+.card-note{font-size:11px;color:#555;margin-top:6px}
+footer{text-align:center;padding:20px;color:#333;font-size:11px}
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <div class="logo-text">ReconARG <span class="badge">DESKTOP</span></div>
+    <div class="logo-sub">Diagnóstico Express de Seguridad · v1.0</div>
+  </div>
+</div>
+<div class="container">
+  <div class="hero">
+    <h1>¿Qué tan expuesto está su dominio?</h1>
+    <p>Análisis completo en segundos: SSL · DNS · Puertos · Subdominios · Filtraciones</p>
+    <div class="scan-box">
+      <input class="scan-input" id="domInput" type="text" placeholder="empresa.com.ar" />
+      <button class="scan-btn" id="scanBtn" onclick="startScan()">Analizar →</button>
+    </div>
+    <div class="examples">
+      Ejemplos:
+      <span onclick="setDomain('clarin.com')">clarin.com</span>
+      <span onclick="setDomain('mercadolibre.com.ar')">mercadolibre.com.ar</span>
+      <span onclick="setDomain('lanacion.com.ar')">lanacion.com.ar</span>
+    </div>
+  </div>
+  <div class="status-bar" id="statusBar">
+    <div class="spinner"></div>
+    <div id="statusText" style="flex:1">Analizando...</div>
+    <div class="progress" style="width:200px"><div class="progress-bar" id="progressBar"></div></div>
+  </div>
+  <div class="results" id="results">
+    <div class="results-header">
+      <div>
+        <div style="font-size:12px;color:#555;margin-bottom:4px">ANÁLISIS DE</div>
+        <div class="domain-title" id="resTitle"></div>
+      </div>
+      <div id="riskBadge" class="risk-badge"></div>
+      <div class="pdf-buttons">
+        <button class="pdf-btn pdf-btn-exec" onclick="downloadPDF('ejecutivo')">📄 Informe Ejecutivo</button>
+        <button class="pdf-btn pdf-btn-tech" onclick="downloadPDF('tecnico')">🔧 Informe Técnico</button>
+      </div>
+    </div>
+    <div class="grid">
+      <!-- SSL Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-icon">🔒</span>
+          <span class="card-title">SSL / TLS</span>
+          <span class="card-status" id="sslSt"></span>
+        </div>
+        <div id="sslBody"></div>
+      </div>
+      <!-- DNS Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-icon">📧</span>
+          <span class="card-title">Seguridad Email</span>
+          <span class="card-status" id="dnsSt"></span>
+        </div>
+        <div id="dnsBody"></div>
+      </div>
+      <!-- Ports Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-icon">🌐</span>
+          <span class="card-title">Puertos Abiertos</span>
+          <span class="card-status" id="portSt"></span>
+        </div>
+        <div id="portBody"></div>
+      </div>
+      <!-- Subdomains Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-icon">🔍</span>
+          <span class="card-title">Subdominios</span>
+          <span class="card-status" id="subSt"></span>
+        </div>
+        <div id="subBody"></div>
+      </div>
+      <!-- Breaches Card - full width -->
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header">
+          <span class="card-icon">💧</span>
+          <span class="card-title">Filtraciones de Datos · HIBP</span>
+          <span class="card-status" id="breachSt"></span>
+        </div>
+        <div id="breachBody"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<footer>ReconARG · Diagnóstico Express Desktop · Los datos son informativos y no reemplazan una auditoría completa.</footer>
+
+<script>
+var scanData = null;
+
+function setDomain(d) {
+  document.getElementById('domInput').value = d;
+}
+
+function startScan() {
+  var domain = document.getElementById('domInput').value.trim();
+  if (!domain) return;
+  
+  var btn = document.getElementById('scanBtn');
+  var bar = document.getElementById('statusBar');
+  var prog = document.getElementById('progressBar');
+  var statusText = document.getElementById('statusText');
+  var results = document.getElementById('results');
+  
+  btn.disabled = true;
+  bar.className = 'status-bar loading';
+  statusText.textContent = 'Resolviendo DNS y analizando ' + domain + '...';
+  results.className = 'results';
+  prog.style.width = '15%';
+  
+  var progInterval = setInterval(function() {
+    var curr = parseFloat(prog.style.width) || 15;
+    if (curr < 85) prog.style.width = (curr + 8) + '%';
+  }, 800);
+  
+  fetch('/api/scan?domain=' + encodeURIComponent(domain))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      clearInterval(progInterval);
+      prog.style.width = '100%';
+      scanData = data;
+      setTimeout(function() {
+        bar.className = 'status-bar';
+        btn.disabled = false;
+        renderResults(data);
+      }, 400);
+    })
+    .catch(function(e) {
+      clearInterval(progInterval);
+      bar.className = 'status-bar error';
+      statusText.textContent = 'Error: ' + e.message;
+      btn.disabled = false;
+    });
+}
+
+function renderResults(d) {
+  var results = document.getElementById('results');
+  results.className = 'results show';
+  document.getElementById('resTitle').textContent = d.domain;
+  
+  var score = calcScore(d);
+  var rb = document.getElementById('riskBadge');
+  if (score <= 30) { rb.className = 'risk-badge risk-low'; rb.textContent = 'Riesgo Bajo'; }
+  else if (score <= 60) { rb.className = 'risk-badge risk-med'; rb.textContent = 'Riesgo Medio'; }
+  else { rb.className = 'risk-badge risk-high'; rb.textContent = 'Riesgo Alto'; }
+  
+  // SSL
+  var ssl = d.ssl || {};
+  document.getElementById('sslSt').className = 'card-status ' + (ssl.valid ? 'st-ok' : 'st-warn');
+  document.getElementById('sslSt').textContent = ssl.valid ? 'VÁLIDO' : 'PROBLEMA';
+  var sslHtml = ssl.valid
+    ? '<div class="ssl-valid">✓ Certificado válido</div>'
+    : '<div class="ssl-invalid">✗ Sin certificado o inválido</div>';
+  sslHtml += '<div style="margin-top:10px">';
+  sslHtml += '<div class="info-row"><span class="info-label">Emisor</span><span class="info-val">' + (ssl.issuer||'N/A') + '</span></div>';
+  sslHtml += '<div class="info-row"><span class="info-label">Vence</span><span class="info-val">' + (ssl.expires||'N/A') + '</span></div>';
+  sslHtml += '<div class="info-row"><span class="info-label">Días restantes</span><span class="info-val">' + (ssl.days_remaining!==null?ssl.days_remaining:'N/A') + '</span></div>';
+  sslHtml += '</div>';
+  document.getElementById('sslBody').innerHTML = sslHtml;
+  
+  // DNS
+  var dns = d.dns || {};
+  var dnsOk = dns.spf && dns.dmarc;
+  document.getElementById('dnsSt').className = 'card-status ' + (dnsOk ? 'st-ok' : 'st-warn');
+  document.getElementById('dnsSt').textContent = dnsOk ? 'PROTEGIDO' : 'REVISAR';
+  var dnsHtml = '<div class="check-row ' + (dns.spf?'check-ok':'check-fail') + '"> SPF ' + (dns.spf?'configurado':'ausente — riesgo spoofing') + '</div>';
+  dnsHtml += '<div class="check-row ' + (dns.dmarc?'check-ok':'check-fail') + '"> DMARC ' + (dns.dmarc?'configurado':'ausente — sin política') + '</div>';
+  if (dns.mx) dnsHtml += '<div style="margin-top:8px;font-size:11px;color:#555">MX: <span style="color:#93c5fd">' + dns.mx + '</span></div>';
+  document.getElementById('dnsBody').innerHTML = dnsHtml;
+  
+  // Ports
+  var ports = (d.ports && d.ports.ports) || [];
+  var highRisk = [21,23,445,3389,6379,27017];
+  var danger = ports.filter(function(p){return highRisk.includes(p.port);});
+  document.getElementById('portSt').className = 'card-status ' + (danger.length>0?'st-warn':'st-ok');
+  document.getElementById('portSt').textContent = ports.length + ' ABIERTOS';
+  var portHtml = '<div class="big-num">' + ports.length + '</div>';
+  portHtml += '<div class="card-note">Puerto' + (ports.length!==1?'s':'') + ' detectado' + (ports.length!==1?'s':'') + ' por Shodan</div>';
+  if (ports.length > 0) {
+    portHtml += '<div class="port-list">';
+    ports.forEach(function(p) {
+      var isDanger = highRisk.includes(p.port);
+      portHtml += '<span class="port-tag ' + (isDanger?'port-danger':'port-normal') + '">' + p.port + '/' + p.service + '</span>';
+    });
+    portHtml += '</div>';
+  }
+  document.getElementById('portBody').innerHTML = portHtml;
+  
+  // Subdomains
+  var subs = Array.isArray(d.subdomains) ? d.subdomains : [];
+  document.getElementById('subSt').className = 'card-status st-info';
+  document.getElementById('subSt').textContent = subs.length + ' ENCONTRADOS';
+  var subHtml = '<div class="big-num">' + subs.length + '</div>';
+  if (subs.length > 0) {
+    subHtml += '<div class="sub-list">';
+    subs.forEach(function(s){ subHtml += '<div class="sub-item">• ' + s + '</div>'; });
+    subHtml += '</div>';
+  } else {
+    subHtml += '<div class="card-note">Sin subdominios detectados en crt.sh</div>';
+  }
+  document.getElementById('subBody').innerHTML = subHtml;
+  
+  // Breaches
+  var b = d.breaches || {count:0, breaches:[]};
+  document.getElementById('breachSt').className = 'card-status ' + (b.count>0?'st-warn':'st-ok');
+  document.getElementById('breachSt').textContent = b.count>0 ? b.count + ' FILTRACIÓN(ES)' : 'SIN FILTRACIONES';
+  var bHtml = '';
+  if (b.count > 0) {
+    bHtml = '<div style="color:#f87171;font-size:14px;font-weight:600;margin-bottom:8px">⚠ ' + b.count + ' filtración(es) detectada(s)</div>';
+    bHtml += '<div class="breach-list">';
+    (b.breaches||[]).slice(0,5).forEach(function(br){
+      bHtml += '<div class="breach-item"><span class="breach-name">' + (typeof br==='string'?br:JSON.stringify(br)) + '</span></div>';
+    });
+    if (b.count > 5) bHtml += '<div style="font-size:11px;color:#555;margin-top:4px">... y ' + (b.count-5) + ' más</div>';
+    bHtml += '</div>';
+  } else {
+    bHtml = '<div class="no-breach">✓ Sin filtraciones detectadas en la base de datos Have I Been Pwned</div>';
+    bHtml += '<div class="card-note" style="margin-top:8px">Base de datos con miles de millones de registros comprometidos</div>';
+  }
+  document.getElementById('breachBody').innerHTML = bHtml;
+}
+
+function calcScore(d) {
+  var s = 0;
+  if (!d.ssl || !d.ssl.valid) s += 25;
+  else if (d.ssl.days_remaining < 30) s += 10;
+  if (!d.dns || !d.dns.spf) s += 10;
+  if (!d.dns || !d.dns.dmarc) s += 10;
+  var hr = [21,23,445,3389,6379,27017];
+  if (d.ports && d.ports.ports) {
+    var dang = d.ports.ports.filter(function(p){return hr.includes(p.port);});
+    s += dang.length * 8;
+  }
+  if (d.breaches && d.breaches.count > 0) s += Math.min(d.breaches.count * 5, 25);
+  return Math.min(s, 100);
+}
+
+function downloadPDF(type) {
+  if (!scanData) return;
+  fetch('/api/pdf/' + type, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(scanData)
+  })
+  .then(function(r) { return r.blob(); })
+  .then(function(blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'informe-' + type + '-' + scanData.domain + '.pdf';
+    a.click();
+    URL.revokeObjectURL(url);
+  })
+  .catch(function(e) { alert('Error generando PDF: ' + e.message); });
+}
+
+document.getElementById('domInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') startScan();
+});
+</script>
+</body>
+</html>
