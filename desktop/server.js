@@ -260,18 +260,19 @@ function calcRiskScore(data) {
 
 function buildRecs(data) {
   var recs = [];
-  if (!data.ssl||!data.ssl.valid) recs.push('Instalar o renovar certificado SSL/TLS.');
-  else if (data.ssl.days_remaining<30) recs.push('Renovar SSL (' + data.ssl.days_remaining + ' dias restantes).');
-  if (!data.dns||!data.dns.spf) recs.push('Configurar SPF en DNS para prevenir spoofing.');
-  if (!data.dns||!data.dns.dmarc) recs.push('Implementar politica DMARC.');
+  if (!data.ssl||!data.ssl.valid) recs.push('SSL');
+  else if (data.ssl.days_remaining<30) recs.push('SSL_VENCE:' + data.ssl.days_remaining);
+  if (!data.dns||!data.dns.spf) recs.push('SPF');
+  if (!data.dns||!data.dns.dmarc) recs.push('DMARC');
   if (data.ports&&data.ports.ports) {
     var d2 = data.ports.ports.filter(function(p){return [21,23,3389,6379,27017].includes(p.port);});
-    if (d2.length>0) recs.push('Restringir puertos sensibles: '+d2.map(function(p){return p.port+'/'+p.service;}).join(', '));
+    if (d2.length>0) recs.push('PUERTOS:'+d2.map(function(p){return p.port+'/'+p.service;}).join(', '));
   }
-  if (data.breaches&&data.breaches.count>0) recs.push(''+data.breaches.count+' filtracion(es): actualizar credenciales.');
-  if (recs.length===0) recs.push('Postura de seguridad aceptable. Mantener monitoreo periodico.');
+  if (data.breaches&&data.breaches.count>0) recs.push('BRECHAS:'+data.breaches.count);
+  if (recs.length===0) recs.push('OK');
   return recs;
 }
+
 
 function generatePDF(lines) {
   var stream = [];
