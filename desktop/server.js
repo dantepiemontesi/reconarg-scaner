@@ -662,6 +662,21 @@ function buildTecnicoPDF(data) {
   return generatePDF(lines);
 }
 
+/* ── Share store (links publicos de reportes) ── */
+var shareStore = {}; // token -> { data, expires }
+
+function createShareToken(scanData) {
+  var token = crypto.randomBytes(16).toString('hex');
+  var expires = Date.now() + 48 * 3600 * 1000; // 48 horas
+  shareStore[token] = { data: scanData, expires: expires };
+  // Limpiar tokens viejos
+  Object.keys(shareStore).forEach(function(t) {
+    if (Date.now() > shareStore[t].expires) delete shareStore[t];
+  });
+  return token;
+}
+
+// Escaneo comparativo (dos dominios en paralelo, sin auth requerida para el render)
 /* ── Express app ── */
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -818,6 +833,86 @@ app.post('/api/pdf/tecnico', requireAuth, function(req, res) {
 
 app.get('/api/health', function(req, res) {
   res.json({ status: 'ok', version: '3.0' });
+});
+
+/* ── SHARE & COMPARE ROUTES ── */
+
+// POST /api/share — guarda el scan en memoria y devuelve un token de link publico
+app.post('/api/share', requireAuth, function(req, res) {
+  try {
+    var token = createShareToken(req.body);
+    var link = 'http://localhost:' + PORT + '/share/' + token;
+    log('Share creado por ' + req.session.username + ': ' + req.body.domain + ' token=' + token);
+    res.json({ ok: true, token: token, link: link });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /share/:token — pagina publica del reporte (sin auth)
+app.get('/share/:token', function(req, res) {
+  var entry = shareStore[req.params.token];
+  if (!entry || Date.now() > entry.expires) {
+    return res.status(404).send('<html><body style="background:#0a0a1a;color:#e0e0e0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;text-align:center"><div><h2 style="color:#ef4444">Link expirado o invalido</h2><p style="color:#666;margin-top:12px">Este diagnostico ya no esta disponible.</p></div></body></html>');
+  }
+  var d = entry.data;
+  var score = 0;
+  if (!d.ssl || !d.ssl.valid) score += 25; else if (d.ssl && d.ssl.days_remaining < 30) score += 10;
+  if (!d.dns || !d.dns.spf) score += 10;
+  if (!d.dns || !d.dns.dmarc) score += 10;
+  if (d.ports && d.ports.ports) { var hh=[21,23,445,3389,6379,27017]; d.ports.ports.forEach(function(p){if(hh.includes(p.port)) score+=8;}); }
+  if (d.breaches && d.breaches.count > 0) score += Math.min(d.breaches.count*5,25);
+  score = Math.min(score, 100);
+  var riskLabel = score<=30?'BAJO':score<=60?'MEDIO':'ALTO';
+  var riskColor = score<=30?'#22c55e':score<=60?'#f59e0b':'#ef4444';
+  var fecha = new Date(d.timestamp).toLocaleString('es-AR');
+  var sslOk = d.ssl && d.ssl.valid && d.ssl.days_remaining > 30;
+  var sslText = sslOk ? 'Conexion segura activa' : (!d.ssl||!d.ssl.valid) ? 'ALERTA: Sin conexion segura' : 'Atencin: SSL vence en '+d.ssl.days_remaining+' dias';
+  var spf = d.dns && d.dns.spf; var dmarc = d.dns && d.dns.dmarc;
+  var emailText = (spf&&dmarc)?'Protegido contra suplantacion':(!spf&&!dmarc)?'ALERTA: Sin proteccion de correo':'Proteccion incompleta';
+  var puertos = d.ports && d.ports.ports ? d.ports.ports : [];
+  var peligrosos = puertos.filter(function(p){return [21,23,445,3389,6379,27017].includes(p.port);});
+  var brechas = d.breaches && d.breaches.count > 0;
+  // Calcular leyes
+  var leyes = [];
+  if (!d.ssl||!d.ssl.valid||(d.breaches&&d.breaches.count>0)||(d.dns&&(!d.dns.spf||!d.dns.dmarc))) leyes.push({l:'Ley 25.326 - Proteccion de Datos Personales',m:'Multa: USD 1.000 a 100.000'});
+  if (d.secHeaders && d.secHeaders.score >= 3) leyes.push({l:'Disposicion 11/2006 DNPDP',m:'Sancion hasta USD 50.000'});
+  var esSalud = ['clinica','sanatorio','medic','salud','hospital','consultorio'].some(function(k){return (d.domain||'').includes(k);});
+  if (esSalud && d.breaches && d.breaches.count>0) leyes.push({l:'Ley 17.132 - Ejercicio de la Medicina',m:'Multa hasta USD 200.000'});
+  if (esSalud && (!d.ssl||!d.ssl.valid)) leyes.push({l:'Ley 26.529 - Derechos del Paciente',m:'Multa hasta USD 150.000'});
+  if (d.sensitivePaths && d.sensitivePaths.some(function(p){return p.risk==='CRITICO';})) leyes.push({l:'Ley 26.388 - Delitos Informaticos',m:'Pena de prision 1 a 4 anios'});
+  var html = '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diagnostico ReconARG: '+d.domain+'</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Segoe UI",Arial,sans-serif;background:#0a0a1a;color:#e0e0e0;min-height:100vh}.header{background:linear-gradient(135deg,#0a0a1a,#1a1a2e);padding:20px 32px;border-bottom:2px solid #e8c84a;display:flex;align-items:center;justify-content:space-between}.logo{color:#e8c84a;font-size:20px;font-weight:800;letter-spacing:2px}.sub{color:#666;font-size:11px}.container{max-width:760px;margin:32px auto;padding:0 20px}.hero{background:#12122a;border:1px solid #2a2a3a;border-radius:14px;padding:28px;margin-bottom:24px}.domain{font-size:24px;font-weight:800;color:#e8c84a}.fecha{color:#666;font-size:12px;margin-top:4px}.risk{display:inline-block;padding:6px 18px;border-radius:20px;font-weight:700;font-size:13px;margin-top:14px;border:2px solid '+riskColor+';color:'+riskColor+'}.score{font-size:28px;font-weight:800;color:'+riskColor+';margin-top:8px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}@media(max-width:540px){.grid{grid-template-columns:1fr}}.card{background:#12122a;border:1px solid #2a2a3a;border-radius:10px;padding:16px}.ct{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#666;margin-bottom:6px}.cv{font-size:18px;font-weight:700;margin-bottom:2px}.cs{font-size:11px;color:#666}.ok{color:#22c55e}.warn{color:#f59e0b}.bad{color:#ef4444}.section{background:#12122a;border:1px solid #2a2a3a;border-radius:10px;padding:18px;margin-bottom:14px}.st{font-size:13px;font-weight:700;color:#e8c84a;margin-bottom:12px}.leyes{background:#1a0a0a;border:1px solid #3a1a1a;border-radius:10px;padding:18px;margin-bottom:14px}.ley-item{margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #2a1a1a}.ley-item:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}.ley-nombre{font-size:12px;font-weight:700;color:#ef4444}.ley-multa{font-size:11px;color:#f59e0b;margin-top:3px}.footer{text-align:center;padding:32px 20px;color:#444;font-size:11px}.cta{background:#e8c84a;color:#0a0a1a;padding:14px 32px;border-radius:10px;font-weight:700;font-size:14px;display:inline-block;margin-top:16px;text-decoration:none}</style></head><body>';
+  html += '<div class="header"><div><div class="logo">&#128274; RECONARG</div><div class="sub">Diagnostico de Seguridad Digital</div></div><div style="font-size:11px;color:#555">Valido 48hs desde la emision</div></div>';
+  html += '<div class="container">';
+  html += '<div class="hero"><div class="domain">'+d.domain+'</div><div class="fecha">Analizado el '+fecha+'</div><div class="risk">Nivel de Riesgo: '+riskLabel+'</div><div class="score">'+score+'/100</div></div>';
+  html += '<div class="grid">';
+  html += '<div class="card"><div class="ct">SSL / Conexion</div><div class="cv '+(sslOk?'ok':!d.ssl||!d.ssl.valid?'bad':'warn')+'">'+( sslOk?'&#10003; Valido':!d.ssl||!d.ssl.valid?'&#10007; Invalido':'&#9888; Por vencer')+'</div><div class="cs">'+sslText+'</div></div>';
+  html += '<div class="card"><div class="ct">Correo Electronico</div><div class="cv '+(spf&&dmarc?'ok':'warn')+'">'+((spf&&dmarc)?'&#10003; Protegido':'&#9888; Vulnerable')+'</div><div class="cs">'+emailText+'</div></div>';
+  html += '<div class="card"><div class="ct">Puertas de Acceso</div><div class="cv '+(peligrosos.length>0?'bad':'ok')+'">'+peligrosos.length+' peligrosa(s)</div><div class="cs">'+(puertos.length)+' puertos detectados</div></div>';
+  html += '<div class="card"><div class="ct">Filtraciones de Datos</div><div class="cv '+(brechas?'bad':'ok')+'">'+(brechas?'&#10007; '+d.breaches.count+' filtracion(es)':'&#10003; Sin filtraciones')+'</div><div class="cs">'+(brechas?'Datos circulando en Internet':'Sin registros en HIBP')+'</div></div>';
+  html += '</div>';
+  if (leyes.length > 0) {
+    html += '<div class="leyes"><div class="st" style="color:#ef4444">&#9888; Marco Legal - Incumplimientos Detectados</div>';
+    leyes.forEach(function(l){ html += '<div class="ley-item"><div class="ley-nombre">'+l.l+'</div><div class="ley-multa">'+l.m+'</div></div>'; });
+    html += '</div>';
+  }
+  if (d.subdomains && d.subdomains.length > 0) { html += '<div class="section"><div class="st">&#127760; Subdominios Encontrados</div><div style="font-size:12px;color:#60a5fa">'+d.subdomains.slice(0,10).join(', ')+'</div></div>'; }
+  html += '<div class="footer"><p>Diagnostico generado por <strong style="color:#e8c84a">ReconARG</strong>. Analisis de superficie publica, no reemplaza una auditoria formal.</p><br><p>Para auditoria completa y certificacion de cumplimiento Ley 25.326:</p><a class="cta" href="mailto:contacto@reconarg.com.ar">Contactar a ReconARG</a></div>';
+  html += '</div></body></html>';
+  res.send(html);
+});
+
+// GET /api/compare — escanea dos dominios en paralelo (requiere auth)
+app.get('/api/compare', requireAuth, async function(req, res) {
+  var d1 = req.query.domain1;
+  var d2 = req.query.domain2;
+  if (!d1 || !d2) return res.status(400).json({ error: 'domain1 y domain2 requeridos' });
+  try {
+    var [r1, r2] = await Promise.all([scanDomain(d1), scanDomain(d2)]);
+    log('Compare por ' + req.session.username + ': ' + d1 + ' vs ' + d2);
+    res.json({ domain1: r1, domain2: r2 });
+  } catch(e) {
+    log('Compare error: ' + e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 /* ── Server start ── */
