@@ -320,41 +320,78 @@ function generatePDF(lines) {
 }
 
 function buildEjecutivoPDF(data) {
-  var score=calcRiskScore(data);
-  var riskLabel=score<=30?'BAJO':score<=60?'MEDIO':'ALTO';
-  var riskColor=score<=30?'green':score<=60?'orange':'red';
-  var fecha=new Date(data.timestamp).toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-  var recs=buildRecs(data);
-  var lines=[
-    {text:'DIAGNOSTICO EXPRESS',x:50,y:35,size:20,bold:true,color:'gold'},
-    {text:'ReconARG - Evaluacion de Seguridad',x:50,y:60,size:11,color:'white'},
-    {text:'Confidencial - Solo para uso interno',x:50,y:78,size:9,color:'gray'},
-    {text:'Dominio analizado:',x:65,y:120,size:10,bold:true},
-    {text:data.domain,x:65,y:137,size:15,bold:true},
-    {text:'Fecha: '+fecha,x:65,y:158,size:9,color:'gray'},
-    {text:'NIVEL DE RIESGO: '+riskLabel+' ('+score+'/100)',x:360,y:132,size:10,bold:true,color:riskColor},
-    {text:'RESUMEN DE HALLAZGOS',x:50,y:200,size:13,bold:true},
-    {text:'--------------------------------------------------',x:50,y:215,size:9,color:'gray'},
-  ];
-  var y=235;
-  var items=[
-    ['Certificado SSL', data.ssl&&data.ssl.valid?'VALIDO - '+data.ssl.days_remaining+' dias':'INVALIDO O AUSENTE', data.ssl&&data.ssl.valid&&data.ssl.days_remaining>30?null:'red'],
-    ['Proteccion Email (SPF+DMARC)', data.dns&&data.dns.spf&&data.dns.dmarc?'Configurados':'Configuracion incompleta', data.dns&&data.dns.spf&&data.dns.dmarc?null:'orange'],
-    ['Puertos expuestos', (data.ports&&data.ports.ports?data.ports.ports.length:0)+' puertos detectados', null],
-    ['Subdominios', (Array.isArray(data.subdomains)?data.subdomains.length:0)+' subdominios', null],
-    ['Filtraciones (HIBP)', data.breaches&&data.breaches.count>0?data.breaches.count+' filtracion(es)':'Sin filtraciones', data.breaches&&data.breaches.count>0?'red':'green'],
-  ];
-  items.forEach(function(item){
-    lines.push({text:'- '+item[0]+':',x:65,y:y,size:10,bold:true});
-    lines.push({text:item[1],x:260,y:y,size:10,color:item[2]});
-    y+=22;
-  });
-  y+=15;
-  lines.push({text:'RECOMENDACIONES',x:50,y:y,size:13,bold:true});
-  y+=18;
-  recs.forEach(function(rec,i){lines.push({text:(i+1)+'. '+rec,x:65,y:y,size:10}); y+=20;});
-  lines.push({text:'Generado por ReconARG - '+new Date().toLocaleDateString('es-AR'),x:50,y:800,size:8,color:'gray'});
-  return generatePDF(lines);
+    var score = calcRiskScore(data);
+    var riskLabel = score <= 30 ? 'BAJO' : score <= 60 ? 'MEDIO' : 'ALTO';
+    var riskColor = score <= 30 ? 'green' : score <= 60 ? 'orange' : 'red';
+    var fecha = new Date(data.timestamp).toLocaleDateString('es-AR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    var sslOk = data.ssl && data.ssl.valid && data.ssl.days_remaining > 30;
+    var sslText = sslOk ? 'Su sitio tiene conexion segura. Los datos viajan protegidos.'
+          : (!data.ssl || !data.ssl.valid) ? 'ALERTA: Su sitio NO tiene conexion segura. Los datos pueden ser interceptados.'
+          : 'ATENCION: La conexion segura vence en ' + data.ssl.days_remaining + ' dias. Renuevela pronto.';
+    var spf = data.dns && data.dns.spf;
+    var dmarc = data.dns && data.dns.dmarc;
+    var emailText = (spf && dmarc) ? 'El correo electronico esta protegido contra suplantacion de identidad.'
+          : (!spf && !dmarc) ? 'ALERTA: El correo no tiene proteccion. Alguien podria enviar emails haciendose pasar por ustedes.'
+          : 'ATENCION: La proteccion del correo esta incompleta. Riesgo de suplantacion parcial.';
+    var puertos = data.ports && data.ports.ports ? data.ports.ports : [];
+    var peligrosos = puertos.filter(function(p){return [21,23,445,3389,6379,27017].includes(p.port);});
+    var puertosText = peligrosos.length > 0 ? 'ALERTA: Se encontraron ' + peligrosos.length + ' puerta(s) de acceso peligrosa(s) abiertas al publico.'
+          : puertos.length > 0 ? 'Se detectaron ' + puertos.length + ' servicio(s) en linea. Sin puertas de alto riesgo detectadas.'
+          : 'No se detectaron servicios expuestos publicamente.';
+    var brechas = data.breaches && data.breaches.count > 0;
+    var brechasText = brechas ? 'ALERTA: ' + data.breaches.count + ' filtracion(es) encontradas. Datos pueden estar circulando en Internet.'
+          : 'No se encontraron datos de esta organizacion en filtraciones publicas conocidas.';
+    var subdText = Array.isArray(data.subdomains) && data.subdomains.length > 0
+          ? 'Se encontraron ' + data.subdomains.length + ' sitio(s) adicionales ligados a este dominio que tambien deben revisarse.'
+          : 'No se detectaron sitios adicionales ligados a este dominio.';
+    var conclusionText, conclusionColor;
+    if (score <= 30){conclusionText='La organizacion tiene una postura de seguridad aceptable. Se recomiendan mejoras preventivas.';conclusionColor='green';}
+    else if (score <= 60){conclusionText='La organizacion tiene vulnerabilidades que deben atenderse. El riesgo es real pero manejable.';conclusionColor='orange';}
+    else{conclusionText='RIESGO ALTO. Los datos de clientes/pacientes/alumnos pueden estar en peligro. Actuar de inmediato.';conclusionColor='red';}
+    var recs = buildRecs(data);
+    var recsHumanas = recs.map(function(rec){
+          if(rec==='SSL') return 'Activar o renovar el candado de seguridad del sitio web. Protege los datos que ingresan los usuarios.';
+          if(rec.startsWith('SSL_VENCE:')) return 'Renovar el candado de seguridad del sitio. Vence en '+rec.split(':')[1]+' dias.';
+          if(rec==='SPF') return 'Configurar proteccion en el correo para que nadie pueda enviar emails falsos en nombre de la organizacion.';
+          if(rec==='DMARC') return 'Activar segunda capa de proteccion en el correo electronico contra suplantacion de identidad.';
+          if(rec.startsWith('PUERTOS:')) return 'Cerrar puertas de acceso tecnicas peligrosas abiertas al publico: '+rec.split(':')[1];
+          if(rec.startsWith('BRECHAS:')) return 'Cambiar contrasenas urgente. Datos de su organizacion aparecieron en '+rec.split(':')[1]+' filtracion(es) publicas.';
+          if(rec==='OK') return 'Postura aceptable. Mantener monitoreo periodico para que la seguridad no decaiga con el tiempo.';
+          return rec;
+    });
+    var lines=[
+      {text:'DIAGNOSTICO DE SEGURIDAD DIGITAL',x:50,y:35,size:17,bold:true,color:'gold'},
+      {text:'Preparado por ReconARG para: '+data.domain,x:50,y:60,size:10,color:'white'},
+      {text:'Fecha del analisis: '+fecha,x:50,y:78,size:9,color:'gray'},
+      {text:'Organizacion analizada:',x:65,y:118,size:10,bold:true},
+      {text:data.domain,x:65,y:135,size:16,bold:true},
+      {text:'RESULTADO GENERAL',x:360,y:118,size:10,bold:true},
+      {text:'NIVEL DE RIESGO: '+riskLabel,x:360,y:135,size:13,bold:true,color:riskColor},
+      {text:'Puntaje: '+score+' de 100 puntos de riesgo',x:360,y:152,size:9,color:'gray'},
+      {text:'QUE ENCONTRAMOS',x:50,y:195,size:13,bold:true},
+      {text:'____________________________________________',x:50,y:208,size:9,color:'gray'},
+        ];
+    var y=228;
+    lines.push({text:'Conexion segura del sitio web (HTTPS):',x:65,y:y,size:10,bold:true});y+=16;
+    lines.push({text:sslText,x:65,y:y,size:9,color:sslOk?'green':'red'});y+=28;
+    lines.push({text:'Proteccion del correo electronico:',x:65,y:y,size:10,bold:true});y+=16;
+    lines.push({text:emailText,x:65,y:y,size:9,color:(spf&&dmarc)?'green':'orange'});y+=28;
+    lines.push({text:'Puertas de acceso tecnicas (puertos):',x:65,y:y,size:10,bold:true});y+=16;
+    lines.push({text:puertosText,x:65,y:y,size:9,color:peligrosos.length>0?'red':'green'});y+=28;
+    lines.push({text:'Datos en filtraciones publicas de Internet:',x:65,y:y,size:10,bold:true});y+=16;
+    lines.push({text:brechasText,x:65,y:y,size:9,color:brechas?'red':'green'});y+=28;
+    lines.push({text:'Presencia digital adicional:',x:65,y:y,size:10,bold:true});y+=16;
+    lines.push({text:subdText,x:65,y:y,size:9,color:'gray'});y+=35;
+    lines.push({text:'CONCLUSION',x:50,y:y,size:13,bold:true});y+=18;
+    lines.push({text:conclusionText,x:65,y:y,size:10,bold:true,color:conclusionColor});y+=35;
+    lines.push({text:'QUE HACER AHORA',x:50,y:y,size:13,bold:true});y+=18;
+    recsHumanas.forEach(function(rec,i){lines.push({text:(i+1)+'. '+rec,x:65,y:y,size:9});y+=22;});
+    y+=10;
+    lines.push({text:'NOTA LEGAL:',x:65,y:y,size:9,bold:true});y+=14;
+    lines.push({text:'La Ley 25.326 obliga a toda organizacion que guarda datos de personas a mantenerlos protegidos.',x:65,y:y,size:8,color:'gray'});y+=12;
+    lines.push({text:'El incumplimiento puede derivar en sanciones de la AAIP (Agencia de Acceso a la Informacion Publica).',x:65,y:y,size:8,color:'gray'});
+    lines.push({text:'Generado por ReconARG - '+new Date().toLocaleDateString('es-AR')+' - Confidencial',x:50,y:800,size:8,color:'gray'});
+    return generatePDF(lines);
 }
 
 function buildTecnicoPDF(data) {
