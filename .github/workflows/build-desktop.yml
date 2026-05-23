@@ -12,65 +12,58 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      
-    - name: Setup Node.js 18
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        
-    - name: Install dependencies
-      working-directory: desktop
-      run: npm install
-      
-    - name: Install pkg globally
-      run: npm install -g pkg
-      
-    - name: Build Windows executable
-      working-directory: desktop
-      run: pkg . --targets node18-win-x64 --output dist/reconarg-diagnostico-win.exe
-      
-    - name: Build Linux executable
-      working-directory: desktop
-      run: pkg . --targets node18-linux-x64 --output dist/reconarg-diagnostico-linux
-      
-    - name: Upload Windows build
-      uses: actions/upload-artifact@v4
-      with:
-        name: reconarg-diagnostico-win
-        path: desktop/dist/reconarg-diagnostico-win.exe
-        retention-days: 30
-        
-    - name: Upload Linux build
-      uses: actions/upload-artifact@v4
-      with:
-        name: reconarg-diagnostico-linux
-        path: desktop/dist/reconarg-diagnostico-linux
-        retention-days: 30
-        
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: desktop-latest
-        name: ReconARG Desktop - Build Actual
-        files: |
-          desktop/dist/reconarg-diagnostico-win.exe
-          desktop/dist/reconarg-diagnostico-linux
-        body: |
-          ## Diagnostico Express ReconARG - App Portable
-          
-          ### Windows
-          Descargar reconarg-diagnostico-win.exe y doble clic para ejecutar.
-          
-          ### Linux
-          ```bash
-          chmod +x reconarg-diagnostico-linux
-          ./reconarg-diagnostico-linux
-          ```
-          
-          El app abre automaticamente el browser en http://localhost:3737
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm install
+
+      - name: Install pkg globally
+        run: npm install -g pkg
+
+      - name: Build Windows executable
+        working-directory: desktop
+        run: pkg . --targets node18-win-x64 --output dist/reconarg-diagnostico-win.exe
+
+      - name: Build Linux executable
+        working-directory: desktop
+        run: pkg . --targets node18-linux-x64 --output dist/reconarg-diagnostico-linux
+
+      - name: Delete existing release and tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete desktop-latest --yes || true
+          git push origin :refs/tags/desktop-latest || true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-latest
+          name: ReconARG Desktop - Build Actual
+          files: |
+            desktop/dist/reconarg-diagnostico-win.exe
+            desktop/dist/reconarg-diagnostico-linux
+          body: |
+            ## Diagnostico Express ReconARG - App Portable
+
+            ### Windows
+            Descargar reconarg-diagnostico-win.exe y doble clic para ejecutar.
+
+            ### Linux
+            ```bash
+            chmod +x reconarg-diagnostico-linux
+            ./reconarg-diagnostico-linux
+            ```
+
+            El app abre automaticamente el browser en http://localhost:3737
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
