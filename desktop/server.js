@@ -231,11 +231,140 @@ async function checkBreaches(domain) {
   } catch(e) { return { status:'error', error:e.message, breaches:[], count:0 }; }
 }
 
+/* ── Deteccion avanzada v2 ── */
+
+function fetchRaw(url, ms) {
+  ms = ms || 5000;
+  return new Promise(function(resolve) {
+    var req = https.get(url, { headers: {'User-Agent':'ReconARG/3.0'} }, function(res) {
+      var body = '';
+      res.on('data', function(c) { body += c; });
+      res.on('end', function() { resolve({ status: res.statusCode, body: body.slice(0,3000), headers: res.headers }); });
+    });
+    req.setTimeout(ms, function() { req.destroy(); resolve({ status: 0, body: '', headers: {} }); });
+    req.on('error', function() { resolve({ status: 0, body: '', headers: {} }); });
+  });
+}
+
+async function checkSecHeaders(domain) {
+  try {
+    var r = await fetchRaw('https://' + domain + '/', 6000);
+    var h = r.headers || {};
+    var missing = [];
+    if (!h['strict-transport-security']) missing.push('HSTS');
+    if (!h['content-security-policy']) missing.push('CSP');
+    if (!h['x-frame-options'] && !(h['content-security-policy']||'').includes('frame-ancestors')) missing.push('X-Frame-Options');
+    if (!h['x-content-type-options']) missing.push('X-Content-Type-Options');
+    if (!h['referrer-policy']) missing.push('Referrer-Policy');
+    if (!h['permissions-policy']) missing.push('Permissions-Policy');
+    var stack = [];
+    if (h['x-powered-by']) stack.push(h['x-powered-by']);
+    if (h['server']) stack.push(h['server']);
+    return { missing: missing, score: missing.length, stack: stack, hsts: !!h['strict-transport-security'], csp: !!h['content-security-policy'] };
+  } catch(e) { return { missing: [], score: 0, stack: [], hsts: false, csp: false }; }
+}
+
+async function checkCMS(domain) {
+  try {
+    var paths = [
+      { path: '/wp-login.php', cms: 'WordPress' },
+      { path: '/wp-admin/', cms: 'WordPress' },
+      { path: '/wp-json/', cms: 'WordPress' },
+      { path: '/xmlrpc.php', cms: 'WordPress' },
+      { path: '/wp-content/debug.log', cms: 'WordPress' },
+      { path: '/readme.html', cms: 'WordPress' },
+      { path: '/administrator/', cms: 'Joomla' },
+      { path: '/user/login', cms: 'Drupal' },
+      ];
+    var detected = new Set();
+    var exposed = [];
+    var checks = await Promise.allSettled(paths.map(function(p) {
+      return fetchRaw('https://' + domain + p.path, 4000).then(function(r) {
+        return { path: p.path, cms: p.cms, status: r.status };
+      });
+    }));
+    checks.forEach(function(c) {
+      if (c.status !== 'fulfilled') return;
+      var r = c.value;
+      if (r.status >= 200 && r.status < 400) {
+        detected.add(r.cms);
+        if (['/xmlrpc.php','/wp-content/debug.log','/readme.html'].includes(r.path) && r.status === 200) exposed.push(r.path);
+      }
+    });
+    return { detected: Array.from(detected), exposed: exposed };
+  } catch(e) { return { detected: [], exposed: [] }; }
+}
+
+async function checkSensitivePaths(domain) {
+  try {
+    var paths = [
+      { p: '/robots.txt', risk: 'INFO' },
+      { p: '/.env', risk: 'CRITICO' },
+      { p: '/wp-config.php.bak', risk: 'CRITICO' },
+      { p: '/backup.zip', risk: 'CRITICO' },
+      { p: '/.git/HEAD', risk: 'CRITICO' },
+      { p: '/phpinfo.php', risk: 'CRITICO' },
+      { p: '/phpmyadmin', risk: 'ALTO' },
+      { p: '/admin', risk: 'ALTO' },
+      { p: '/api/v1/users', risk: 'ALTO' },
+      { p: '/.htaccess', risk: 'ALTO' },
+      ];
+    var found = [];
+    var checks = await Promise.allSettled(paths.map(function(p) {
+      return fetchRaw('https://' + domain + p.p, 3000).then(function(r) {
+        return { path: p.p, risk: p.risk, status: r.status };
+      });
+    }));
+    checks.forEach(function(c) {
+      if (c.status !== 'fulfilled') return;
+      if (c.value.status === 200) found.push({ path: c.value.path, risk: c.value.risk });
+    });
+    return found;
+  } catch(e) { return []; }
+}
+
+async function checkHTTPS(domain) {
+  try {
+    return new Promise(function(resolve) {
+      var http = require('http');
+      var req = http.get('http://' + domain + '/', { headers: {'User-Agent':'ReconARG/3.0'}, timeout: 5000 }, function(res) {
+        var redirectsToHTTPS = (res.statusCode === 301 || res.statusCode === 302) && (res.headers.location||'').startsWith('https');
+        resolve({ forcesHTTPS: redirectsToHTTPS, httpStatus: res.statusCode });
+      });
+      req.on('timeout', function() { req.destroy(); resolve({ forcesHTTPS: false, httpStatus: 0 }); });
+      req.on('error', function() { resolve({ forcesHTTPS: true, httpStatus: 0 }); });
+    });
+  } catch(e) { return { forcesHTTPS: false, httpStatus: 0 }; }
+}
+
+async function checkEmailSec(domain) {
+  try {
+    var r = await Promise.allSettled([
+      dnsQ(domain,'TXT'),
+      dnsQ('_dmarc.'+domain,'TXT'),
+      dnsQ('_domainkey.'+domain,'TXT')
+      ]);
+    var spf = r[0].status==='fulfilled' && Array.isArray(r[0].value.Answer) && r[0].value.Answer.some(function(x){return (x.data||'').includes('v=spf1');});
+    var dmarc = r[1].status==='fulfilled' && Array.isArray(r[1].value.Answer) && r[1].value.Answer.some(function(x){return (x.data||'').includes('v=DMARC1');});
+    var dkim = r[2].status==='fulfilled' && Array.isArray(r[2].value.Answer) && r[2].value.Answer.length > 0;
+    var dmarcPolicy = 'none';
+    if (r[1].status==='fulfilled' && r[1].value && r[1].value.Answer && r[1].value.Answer[0]) {
+      var dr = (r[1].value.Answer[0].data||'');
+      if (dr.includes('p=reject')) dmarcPolicy = 'reject';
+      else if (dr.includes('p=quarantine')) dmarcPolicy = 'quarantine';
+    }
+    return { spf: !!spf, dmarc: !!dmarc, dkim: !!dkim, dmarcPolicy: dmarcPolicy };
+  } catch(e) { return { spf: false, dmarc: false, dkim: false, dmarcPolicy: 'none' }; }
+}
+
 async function scanDomain(domain) {
   domain = domain.toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim();
   log('Escaneando: ' + domain);
-  var [ssl, dns_r, ports, subs, breaches] = await Promise.all([checkSSL(domain), checkDNS(domain), checkPorts(domain), checkSubdomains(domain), checkBreaches(domain)]);
-  return { domain, timestamp: new Date().toISOString(), ssl, dns: dns_r, ports, subdomains: subs, breaches };
+  var [ssl, dns_r, ports, subs, breaches, secHdr, cms, sensitivePaths, httpsCheck, emailSec] = await Promise.all([
+    checkSSL(domain), checkDNS(domain), checkPorts(domain), checkSubdomains(domain), checkBreaches(domain),
+    checkSecHeaders(domain), checkCMS(domain), checkSensitivePaths(domain), checkHTTPS(domain), checkEmailSec(domain)
+    ]);
+  return { domain, timestamp: new Date().toISOString(), ssl, dns: dns_r, ports, subdomains: subs, breaches, secHeaders: secHdr, cms, sensitivePaths, httpsCheck, emailSec };
 }
 
 /* ── PDF nativo ── */
@@ -255,6 +384,12 @@ function calcRiskScore(data) {
     score += d2.length * 8;
   }
   if (data.breaches && data.breaches.count > 0) score += Math.min(data.breaches.count*5,25);
+  if (data.httpsCheck && !data.httpsCheck.forcesHTTPS) score += 8;
+  if (data.cms && data.cms.exposed && data.cms.exposed.length > 0) score += data.cms.exposed.length * 5;
+  if (data.sensitivePaths && data.sensitivePaths.length > 0) {
+    data.sensitivePaths.forEach(function(p){if(p.risk==='CRITICO') score+=12; else if(p.risk==='ALTO') score+=6;});
+  }
+  if (data.secHeaders && data.secHeaders.score) score += Math.min(data.secHeaders.score * 2, 12);
   return Math.min(score,100);
 }
 
