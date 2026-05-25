@@ -26,16 +26,21 @@ jobs:
         working-directory: desktop
         run: npm install
 
-      - name: Install pkg globally
-        run: npm install -g pkg
-
       - name: Build Windows executable
         working-directory: desktop
-        run: pkg . --targets node18-win-x64 --output dist/reconarg-diagnostico-win.exe
+        run: npx @yao-pkg/pkg . --targets node18-win-x64 --output dist/reconarg-diagnostico-win.exe --compress GZip
 
       - name: Build Linux executable
         working-directory: desktop
-        run: pkg . --targets node18-linux-x64 --output dist/reconarg-diagnostico-linux
+        run: npx @yao-pkg/pkg . --targets node18-linux-x64 --output dist/reconarg-diagnostico-linux --compress GZip
+
+      - name: Package portable ZIP (Windows)
+        run: |
+          mkdir -p release_win
+          cp desktop/dist/reconarg-diagnostico-win.exe release_win/
+          cp desktop/RECONARG.bat release_win/
+          cp desktop/LEEME.txt release_win/
+          cd release_win && zip -r ../ReconARG-Portable-Windows.zip .
 
       - name: Delete existing release and tag
         env:
@@ -50,13 +55,21 @@ jobs:
           tag_name: desktop-latest
           name: ReconARG Desktop - Build Actual
           files: |
+            ReconARG-Portable-Windows.zip
             desktop/dist/reconarg-diagnostico-win.exe
             desktop/dist/reconarg-diagnostico-linux
           body: |
-            ## Diagnostico Express ReconARG - App Portable
+            ## Diagnostico Express ReconARG - App Portable v4
 
-            ### Windows
-            Descargar reconarg-diagnostico-win.exe y doble clic para ejecutar.
+            ### Windows (RECOMENDADO - Pendrive)
+            1. Descargar **ReconARG-Portable-Windows.zip**
+            2. Descomprimir en el pendrive
+            3. Doble clic en **RECONARG.bat**
+            4. Leer **LEEME.txt** si hay problemas con Windows Defender o SmartScreen
+
+            ### Windows (ejecutable directo)
+            Descargar reconarg-diagnostico-win.exe y doble clic.
+            Si Windows bloquea: clic derecho > Propiedades > marcar "Desbloquear".
 
             ### Linux
             ```bash
