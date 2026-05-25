@@ -1,20 +1,20 @@
 {
   "name": "reconarg-desktop",
-  "version": "2.0.0",
-  "description": "Diagnostico Express ReconARG - App portable",
+  "version": "4.0.0",
+  "description": "Diagnostico Express ReconARG - App portable v4",
   "main": "server.js",
   "bin": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build:win": "pkg . --targets node18-win-x64 --output dist/reconarg-diagnostico-win.exe",
-    "build:linux": "pkg . --targets node18-linux-x64 --output dist/reconarg-diagnostico-linux",
+    "build:win": "npx @yao-pkg/pkg . --targets node18-win-x64 --output dist/reconarg-diagnostico-win.exe --compress GZip",
+    "build:linux": "npx @yao-pkg/pkg . --targets node18-linux-x64 --output dist/reconarg-diagnostico-linux --compress GZip",
     "build": "npm run build:win && npm run build:linux"
   },
   "dependencies": {
     "express": "^4.18.2"
   },
   "devDependencies": {
-    "pkg": "^5.8.1"
+    "@yao-pkg/pkg": "^5.16.1"
   },
   "pkg": {
     "assets": [
@@ -22,5 +22,7 @@
     ],
     "targets": ["node18-win-x64", "node18-linux-x64"],
     "outputPath": "dist"
-  }
+  },
+  "license": "UNLICENSED",
+  "private": true
 }
