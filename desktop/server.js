@@ -1,6 +1,7 @@
 'use strict';
-// ReconARG Desktop - server.js v3
+// ReconARG Desktop - server.js v4 - Portable Fix
 // Scanner + Auth con login, sesiones, roles admin/usuario
+// CAMBIOS v4: portabilidad pendrive, DATA_DIR en LOCALAPPDATA, cascada de puertos, logs mejorados
 
 const express = require('express');
 const path = require('path');
@@ -12,23 +13,34 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 
-const PORT = 3737;
-const HIBP_KEY = '032a78c1720f4dadb2b86593991ce75b';
-const SESSION_HOURS = 8; // sesion expira a las 8hs
-const ENCRYPT_KEY = 'ReconARG-SecureKey-2024-v3!@#$%^&'; // 32 chars para AES-256
+// ============================================================
+// PORTABILITY LAYER v4 - carpeta de datos en disco local
+// ============================================================
+const DATA_DIR = path.join(process.env.LOCALAPPDATA || process.env.HOME || os.homedir(), 'ReconARG');
+try {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch(e) {
+  console.error('[ReconARG] No se pudo crear DATA_DIR:', e.message);
+}
 
-// Log
-const logFile = path.join(os.tmpdir(), 'reconarg-debug.log');
+const BASE_PORT = 3737;
+const HIBP_KEY = '032a78c1720f4dadb2b86593991ce75b';
+const SESSION_HOURS = 8;
+const ENCRYPT_KEY = 'ReconARG-SecureKey-2024-v3!@#$$%^&';
+
+// Log mejorado - siempre en disco local
+const logFile = path.join(DATA_DIR, 'reconarg-debug.log');
 function log(msg) {
   const line = new Date().toISOString() + ' ' + msg + '\n';
   try { fs.appendFileSync(logFile, line); } catch(_) {}
   console.log(msg);
 }
 
-process.on('uncaughtException', function(err) { log('UNCAUGHT: ' + err.message); });
+process.on('uncaughtException', function(err) { log('UNCAUGHT: ' + err.message + (err.stack ? '\n' + err.stack : '')); });
 process.on('unhandledRejection', function(r) { log('REJECTION: ' + r); });
 
-// Encriptacion AES-256-CBC para guardar usuarios
+// ============================================================
+
 function encrypt(text) {
   var key = Buffer.from(ENCRYPT_KEY.slice(0,32), 'utf8');
   var iv = crypto.randomBytes(16);
@@ -46,7 +58,6 @@ function decrypt(text) {
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
 }
 
-// Hash de password con SHA-256 + salt
 function hashPassword(password, salt) {
   salt = salt || crypto.randomBytes(16).toString('hex');
   var hash = crypto.createHmac('sha256', salt).update(password).digest('hex');
@@ -58,20 +69,14 @@ function verifyPassword(password, salt, storedHash) {
   return h === storedHash;
 }
 
-// Ruta del archivo de usuarios (junto al ejecutable o en dev junto al script)
-var usersFile;
-if (process.pkg) {
-  usersFile = path.join(path.dirname(process.execPath), 'reconarg-users.dat');
-} else {
-  usersFile = path.join(__dirname, 'reconarg-users.dat');
-}
+// Ruta del archivo de usuarios - SIEMPRE en DATA_DIR (disco local, nunca en el pendrive)
+var usersFile = path.join(DATA_DIR, 'reconarg-users.dat');
+log('DATA_DIR: ' + DATA_DIR);
 log('Archivo de usuarios: ' + usersFile);
 
-// Usuario inicial hardcodeado (admin master)
 var MASTER_HASH = hashPassword('reconargscaner', 'reconarg-master-salt-2024');
 
 function loadUsers() {
-  // Usuario master siempre presente
   var master = { username: 'dantepie1', salt: 'reconarg-master-salt-2024', hash: MASTER_HASH.hash, role: 'admin', created: '2024-01-01' };
   if (!fs.existsSync(usersFile)) return [master];
   try {
@@ -79,20 +84,21 @@ function loadUsers() {
     if (!raw) return [master];
     var dec = decrypt(raw);
     var extra = JSON.parse(dec);
-    // Siempre re-inject master para que no pueda ser eliminado del archivo
     extra = extra.filter(function(u) { return u.username !== 'dantepie1'; });
     return [master].concat(extra);
   } catch(e) { log('loadUsers error: ' + e.message); return [master]; }
 }
 
 function saveUsers(users) {
-  // Nunca guardar el master en el archivo (se inyecta en runtime)
   var toSave = users.filter(function(u) { return u.username !== 'dantepie1'; });
   var enc = encrypt(JSON.stringify(toSave));
-  fs.writeFileSync(usersFile, enc, 'utf8');
+  try {
+    fs.writeFileSync(usersFile, enc, 'utf8');
+  } catch(e) {
+    log('saveUsers error: ' + e.message + ' - ruta: ' + usersFile);
+  }
 }
 
-// Sesiones en memoria (token -> {username, role, expires})
 var sessions = {};
 
 function createSession(username, role) {
@@ -114,7 +120,6 @@ function destroySession(token) {
   delete sessions[token];
 }
 
-// Limpiar sesiones expiradas cada 30 min
 setInterval(function() {
   var now = Date.now();
   Object.keys(sessions).forEach(function(t) {
@@ -122,7 +127,6 @@ setInterval(function() {
   });
 }, 30 * 60 * 1000);
 
-// Middleware: requiere sesion valida
 function requireAuth(req, res, next) {
   var token = req.headers['x-auth-token'] || req.cookies && req.cookies.token;
   var s = getSession(token);
@@ -132,17 +136,15 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// Middleware: requiere rol admin
 function requireAdmin(req, res, next) {
   if (req.session.role !== 'admin') return res.status(403).json({ error: 'Se requiere rol administrador' });
   next();
 }
 
-/* ── Scanner ── */
 function fetchJSON(url, ms, headers) {
   ms = ms || 6000; headers = headers || {};
   return new Promise(function(resolve, reject) {
-    var req = https.get(url, { headers: Object.assign({'User-Agent':'ReconARG/3.0'}, headers) }, function(res) {
+    var req = https.get(url, { headers: Object.assign({'User-Agent':'ReconARG/4.0'}, headers) }, function(res) {
       var body = '';
       res.on('data', function(c) { body += c; });
       res.on('end', function() {
@@ -231,12 +233,10 @@ async function checkBreaches(domain) {
   } catch(e) { return { status:'error', error:e.message, breaches:[], count:0 }; }
 }
 
-/* ── Deteccion avanzada v2 ── */
-
 function fetchRaw(url, ms) {
   ms = ms || 5000;
   return new Promise(function(resolve) {
-    var req = https.get(url, { headers: {'User-Agent':'ReconARG/3.0'} }, function(res) {
+    var req = https.get(url, { headers: {'User-Agent':'ReconARG/4.0'} }, function(res) {
       var body = '';
       res.on('data', function(c) { body += c; });
       res.on('end', function() { resolve({ status: res.statusCode, body: body.slice(0,3000), headers: res.headers }); });
@@ -275,7 +275,7 @@ async function checkCMS(domain) {
       { path: '/readme.html', cms: 'WordPress' },
       { path: '/administrator/', cms: 'Joomla' },
       { path: '/user/login', cms: 'Drupal' },
-      ];
+    ];
     var detected = new Set();
     var exposed = [];
     var checks = await Promise.allSettled(paths.map(function(p) {
@@ -308,7 +308,7 @@ async function checkSensitivePaths(domain) {
       { p: '/admin', risk: 'ALTO' },
       { p: '/api/v1/users', risk: 'ALTO' },
       { p: '/.htaccess', risk: 'ALTO' },
-      ];
+    ];
     var found = [];
     var checks = await Promise.allSettled(paths.map(function(p) {
       return fetchRaw('https://' + domain + p.p, 3000).then(function(r) {
@@ -327,7 +327,7 @@ async function checkHTTPS(domain) {
   try {
     return new Promise(function(resolve) {
       var http = require('http');
-      var req = http.get('http://' + domain + '/', { headers: {'User-Agent':'ReconARG/3.0'}, timeout: 5000 }, function(res) {
+      var req = http.get('http://' + domain + '/', { headers: {'User-Agent':'ReconARG/4.0'}, timeout: 5000 }, function(res) {
         var redirectsToHTTPS = (res.statusCode === 301 || res.statusCode === 302) && (res.headers.location||'').startsWith('https');
         resolve({ forcesHTTPS: redirectsToHTTPS, httpStatus: res.statusCode });
       });
@@ -343,7 +343,7 @@ async function checkEmailSec(domain) {
       dnsQ(domain,'TXT'),
       dnsQ('_dmarc.'+domain,'TXT'),
       dnsQ('_domainkey.'+domain,'TXT')
-      ]);
+    ]);
     var spf = r[0].status==='fulfilled' && Array.isArray(r[0].value.Answer) && r[0].value.Answer.some(function(x){return (x.data||'').includes('v=spf1');});
     var dmarc = r[1].status==='fulfilled' && Array.isArray(r[1].value.Answer) && r[1].value.Answer.some(function(x){return (x.data||'').includes('v=DMARC1');});
     var dkim = r[2].status==='fulfilled' && Array.isArray(r[2].value.Answer) && r[2].value.Answer.length > 0;
@@ -363,11 +363,10 @@ async function scanDomain(domain) {
   var [ssl, dns_r, ports, subs, breaches, secHdr, cms, sensitivePaths, httpsCheck, emailSec] = await Promise.all([
     checkSSL(domain), checkDNS(domain), checkPorts(domain), checkSubdomains(domain), checkBreaches(domain),
     checkSecHeaders(domain), checkCMS(domain), checkSensitivePaths(domain), checkHTTPS(domain), checkEmailSec(domain)
-    ]);
+  ]);
   return { domain, timestamp: new Date().toISOString(), ssl, dns: dns_r, ports, subdomains: subs, breaches, secHeaders: secHdr, cms, sensitivePaths, httpsCheck, emailSec };
 }
 
-/* ── PDF nativo ── */
 function escPDF(s) {
   return String(s||'').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/\r/g,'').replace(/\n/g,' ');
 }
@@ -407,7 +406,6 @@ function buildRecs(data) {
   if (recs.length===0) recs.push('OK');
   return recs;
 }
-
 
 function generatePDF(lines) {
   var stream = [];
@@ -454,168 +452,109 @@ function generatePDF(lines) {
   xref+='trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n'+xOff+'\n%%EOF\n';
   return Buffer.concat([body, Buffer.from(xref,'latin1')]);
 }
-
 function buildEjecutivoPDF(data) {
-var score = calcRiskScore(data);
-var riskLabel = score <= 30 ? 'BAJO' : score <= 60 ? 'MEDIO' : 'ALTO';
-var riskColor = score <= 30 ? 'green' : score <= 60 ? 'orange' : 'red';
-var fecha = new Date(data.timestamp).toLocaleDateString('es-AR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-
-var leyesIncumplidas = [];
-var multaMin = 0; var multaMax = 0;
-
-if (!data.ssl || !data.ssl.valid || (data.breaches && data.breaches.count > 0) || (data.dns && (!data.dns.spf || !data.dns.dmarc))) {
-  leyesIncumplidas.push({
-    ley: 'Ley 25.326 - Proteccion de Datos Personales',
-    art: 'Art. 9, 10, 11 - Seguridad e integridad de los datos',
-    organismo: 'AAIP (Agencia de Acceso a la Informacion Publica)',
-    extra: 'Multa entre USD 1.000 y USD 100.000 por infraccion',
-    multa_min: 1000, multa_max: 100000
+  var score = calcRiskScore(data);
+  var riskLabel = score <= 30 ? 'BAJO' : score <= 60 ? 'MEDIO' : 'ALTO';
+  var riskColor = score <= 30 ? 'green' : score <= 60 ? 'orange' : 'red';
+  var fecha = new Date(data.timestamp).toLocaleDateString('es-AR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  var leyesIncumplidas = [];
+  var multaMin = 0; var multaMax = 0;
+  if (!data.ssl || !data.ssl.valid || (data.breaches && data.breaches.count > 0) || (data.dns && (!data.dns.spf || !data.dns.dmarc))) {
+    leyesIncumplidas.push({ ley: 'Ley 25.326 - Proteccion de Datos Personales', art: 'Art. 9, 10, 11 - Seguridad e integridad de los datos', organismo: 'AAIP (Agencia de Acceso a la Informacion Publica)', extra: 'Multa entre USD 1.000 y USD 100.000 por infraccion', multa_min: 1000, multa_max: 100000 });
+    multaMin += 1000; multaMax += 100000;
+  }
+  if (data.secHeaders && data.secHeaders.score >= 3) {
+    leyesIncumplidas.push({ ley: 'Disposicion 11/2006 DNPDP', art: 'Medidas de seguridad minimas para sistemas informaticos', organismo: 'AAIP', extra: 'Sancion administrativa hasta USD 50.000 + inhabilitacion', multa_min: 500, multa_max: 50000 });
+    multaMin += 500; multaMax += 50000;
+  }
+  var esSalud = ['clinica','sanatorio','medic','salud','hospital','consultorio'].some(function(k){ return (data.domain||'').includes(k); });
+  if (esSalud && data.breaches && data.breaches.count > 0) {
+    leyesIncumplidas.push({ ley: 'Ley 17.132 - Ejercicio de la Medicina', art: 'Art. 19 - Secreto profesional y proteccion de datos de pacientes', organismo: 'Ministerio de Salud + AAIP', extra: 'Multa hasta USD 200.000 + responsabilidad civil y penal', multa_min: 5000, multa_max: 200000 });
+    multaMin += 5000; multaMax += 200000;
+  }
+  if (esSalud && (!data.ssl || !data.ssl.valid)) {
+    leyesIncumplidas.push({ ley: 'Ley 26.529 - Derechos del Paciente', art: 'Art. 18 - Historia Clinica Digital debe garantizar confidencialidad', organismo: 'Ministerio de Salud de la Nacion', extra: 'Multa hasta USD 150.000 + posible inhabilitacion del establecimiento', multa_min: 10000, multa_max: 150000 });
+    multaMin += 10000; multaMax += 150000;
+  }
+  if (data.sensitivePaths && data.sensitivePaths.some(function(p){ return p.risk === 'CRITICO'; })) {
+    leyesIncumplidas.push({ ley: 'Ley 26.388 - Delitos Informaticos', art: 'Art. 157bis - Acceso no autorizado a datos personales', organismo: 'Poder Judicial - Fiscalia Informatica', extra: 'Pena de prision de 1 a 4 anios por exposicion de datos sensibles', multa_min: 0, multa_max: 0 });
+  }
+  var sslOk = data.ssl && data.ssl.valid && data.ssl.days_remaining > 30;
+  var sslText = sslOk ? 'Su sitio tiene conexion segura. Los datos viajan protegidos.' : (!data.ssl || !data.ssl.valid) ? 'ALERTA: Su sitio NO tiene conexion segura. Los datos pueden ser interceptados.' : 'ATENCION: La conexion segura vence en ' + data.ssl.days_remaining + ' dias. Renovela pronto.';
+  var spf = data.dns && data.dns.spf; var dmarc = data.dns && data.dns.dmarc;
+  var emailText = (spf && dmarc) ? 'El correo electronico esta protegido contra suplantacion de identidad.' : (!spf && !dmarc) ? 'ALERTA: El correo no tiene proteccion. Alguien podria enviar emails falsos en nombre de la organizacion.' : 'ATENCION: La proteccion del correo esta incompleta. Riesgo de suplantacion parcial.';
+  var puertos = data.ports && data.ports.ports ? data.ports.ports : [];
+  var peligrosos = puertos.filter(function(p){return [21,23,445,3389,6379,27017].includes(p.port);});
+  var puertosText = peligrosos.length > 0 ? 'ALERTA: Se encontraron ' + peligrosos.length + ' puerta(s) de acceso peligrosa(s) abiertas al publico.' : puertos.length > 0 ? 'Se detectaron ' + puertos.length + ' servicio(s) en linea. Sin puertas de alto riesgo detectadas.' : 'No se detectaron servicios expuestos publicamente.';
+  var brechas = data.breaches && data.breaches.count > 0;
+  var brechasText = brechas ? 'ALERTA: ' + data.breaches.count + ' filtracion(es) encontradas. Datos pueden estar circulando en Internet.' : 'No se encontraron datos de esta organizacion en filtraciones publicas conocidas.';
+  var subdText = Array.isArray(data.subdomains) && data.subdomains.length > 0 ? 'Se encontraron ' + data.subdomains.length + ' sitio(s) adicionales ligados a este dominio que tambien deben revisarse.' : 'No se detectaron sitios adicionales ligados a este dominio.';
+  var conclusionText, conclusionColor;
+  if (score <= 30){conclusionText='La organizacion tiene una postura de seguridad aceptable. Se recomiendan mejoras preventivas.';conclusionColor='green';}
+  else if (score <= 60){conclusionText='La organizacion tiene vulnerabilidades que deben atenderse. El riesgo es real pero manejable.';conclusionColor='orange';}
+  else{conclusionText='RIESGO ALTO. Los datos de clientes/pacientes/alumnos pueden estar en peligro. Actuar de inmediato.';conclusionColor='red';}
+  var recs = buildRecs(data);
+  var recsHumanas = recs.map(function(rec){
+    if(rec==='SSL') return 'Activar o renovar el candado de seguridad del sitio web.';
+    if(rec.startsWith('SSL_VENCE:')) return 'Renovar el candado de seguridad. Vence en '+rec.split(':')[1]+' dias.';
+    if(rec==='SPF') return 'Configurar proteccion en el correo contra emails falsos en nombre de la organizacion.';
+    if(rec==='DMARC') return 'Activar segunda capa de proteccion del correo contra suplantacion de identidad.';
+    if(rec.startsWith('PUERTOS:')) return 'Cerrar puertas de acceso tecnicas peligrosas: '+rec.split(':')[1];
+    if(rec.startsWith('BRECHAS:')) return 'Cambiar contrasenas urgente. Datos en '+rec.split(':')[1]+' filtracion(es) publicas.';
+    if(rec==='OK') return 'Postura aceptable. Mantener monitoreo periodico.';
+    return rec;
   });
-  multaMin += 1000; multaMax += 100000;
-}
-
-if (data.secHeaders && data.secHeaders.score >= 3) {
-  leyesIncumplidas.push({
-    ley: 'Disposicion 11/2006 DNPDP',
-    art: 'Medidas de seguridad minimas para sistemas informaticos',
-    organismo: 'AAIP',
-    extra: 'Sancion administrativa hasta USD 50.000 + inhabilitacion',
-    multa_min: 500, multa_max: 50000
-  });
-  multaMin += 500; multaMax += 50000;
-}
-
-var esSalud = ['clinica','sanatorio','medic','salud','hospital','consultorio'].some(function(k){ return (data.domain||'').includes(k); });
-if (esSalud && data.breaches && data.breaches.count > 0) {
-  leyesIncumplidas.push({
-    ley: 'Ley 17.132 - Ejercicio de la Medicina',
-    art: 'Art. 19 - Secreto profesional y proteccion de datos de pacientes',
-    organismo: 'Ministerio de Salud + AAIP',
-    extra: 'Multa hasta USD 200.000 + responsabilidad civil y penal',
-    multa_min: 5000, multa_max: 200000
-  });
-  multaMin += 5000; multaMax += 200000;
-}
-
-if (esSalud && (!data.ssl || !data.ssl.valid)) {
-  leyesIncumplidas.push({
-    ley: 'Ley 26.529 - Derechos del Paciente',
-    art: 'Art. 18 - Historia Clinica Digital debe garantizar confidencialidad',
-    organismo: 'Ministerio de Salud de la Nacion',
-    extra: 'Multa hasta USD 150.000 + posible inhabilitacion del establecimiento',
-    multa_min: 10000, multa_max: 150000
-  });
-  multaMin += 10000; multaMax += 150000;
-}
-
-if (data.sensitivePaths && data.sensitivePaths.some(function(p){ return p.risk === 'CRITICO'; })) {
-  leyesIncumplidas.push({
-    ley: 'Ley 26.388 - Delitos Informaticos',
-    art: 'Art. 157bis - Acceso no autorizado a datos personales',
-    organismo: 'Poder Judicial - Fiscalia Informatica',
-    extra: 'Pena de prision de 1 a 4 anios por exposicion de datos sensibles',
-    multa_min: 0, multa_max: 0
-  });
-}
-
-var sslOk = data.ssl && data.ssl.valid && data.ssl.days_remaining > 30;
-var sslText = sslOk ? 'Su sitio tiene conexion segura. Los datos viajan protegidos.'
-: (!data.ssl || !data.ssl.valid) ? 'ALERTA: Su sitio NO tiene conexion segura. Los datos pueden ser interceptados.'
-: 'ATENCION: La conexion segura vence en ' + data.ssl.days_remaining + ' dias. Renuevela pronto.';
-
-var spf = data.dns && data.dns.spf;
-var dmarc = data.dns && data.dns.dmarc;
-var emailText = (spf && dmarc) ? 'El correo electronico esta protegido contra suplantacion de identidad.'
-: (!spf && !dmarc) ? 'ALERTA: El correo no tiene proteccion. Alguien podria enviar emails falsos en nombre de la organizacion.'
-: 'ATENCION: La proteccion del correo esta incompleta. Riesgo de suplantacion parcial.';
-
-var puertos = data.ports && data.ports.ports ? data.ports.ports : [];
-var peligrosos = puertos.filter(function(p){return [21,23,445,3389,6379,27017].includes(p.port);});
-var puertosText = peligrosos.length > 0 ? 'ALERTA: Se encontraron ' + peligrosos.length + ' puerta(s) de acceso peligrosa(s) abiertas al publico.'
-: puertos.length > 0 ? 'Se detectaron ' + puertos.length + ' servicio(s) en linea. Sin puertas de alto riesgo detectadas.'
-: 'No se detectaron servicios expuestos publicamente.';
-
-var brechas = data.breaches && data.breaches.count > 0;
-var brechasText = brechas ? 'ALERTA: ' + data.breaches.count + ' filtracion(es) encontradas. Datos pueden estar circulando en Internet.'
-: 'No se encontraron datos de esta organizacion en filtraciones publicas conocidas.';
-
-var subdText = Array.isArray(data.subdomains) && data.subdomains.length > 0
-? 'Se encontraron ' + data.subdomains.length + ' sitio(s) adicionales ligados a este dominio que tambien deben revisarse.'
-: 'No se detectaron sitios adicionales ligados a este dominio.';
-
-var conclusionText, conclusionColor;
-if (score <= 30){conclusionText='La organizacion tiene una postura de seguridad aceptable. Se recomiendan mejoras preventivas.';conclusionColor='green';}
-else if (score <= 60){conclusionText='La organizacion tiene vulnerabilidades que deben atenderse. El riesgo es real pero manejable.';conclusionColor='orange';}
-else{conclusionText='RIESGO ALTO. Los datos de clientes/pacientes/alumnos pueden estar en peligro. Actuar de inmediato.';conclusionColor='red';}
-
-var recs = buildRecs(data);
-var recsHumanas = recs.map(function(rec){
-if(rec==='SSL') return 'Activar o renovar el candado de seguridad del sitio web.';
-if(rec.startsWith('SSL_VENCE:')) return 'Renovar el candado de seguridad. Vence en '+rec.split(':')[1]+' dias.';
-if(rec==='SPF') return 'Configurar proteccion en el correo contra emails falsos en nombre de la organizacion.';
-if(rec==='DMARC') return 'Activar segunda capa de proteccion del correo contra suplantacion de identidad.';
-if(rec.startsWith('PUERTOS:')) return 'Cerrar puertas de acceso tecnicas peligrosas: '+rec.split(':')[1];
-if(rec.startsWith('BRECHAS:')) return 'Cambiar contrasenas urgente. Datos en '+rec.split(':')[1]+' filtracion(es) publicas.';
-if(rec==='OK') return 'Postura aceptable. Mantener monitoreo periodico.';
-return rec;
-});
-
-var lines=[
-{text:'DIAGNOSTICO DE SEGURIDAD DIGITAL',x:50,y:35,size:17,bold:true,color:'gold'},
-{text:'Preparado por ReconARG para: '+data.domain,x:50,y:60,size:10,color:'white'},
-{text:'Fecha del analisis: '+fecha,x:50,y:78,size:9,color:'gray'},
-{text:'Organizacion analizada:',x:65,y:118,size:10,bold:true},
-{text:data.domain,x:65,y:135,size:16,bold:true},
-{text:'RESULTADO GENERAL',x:360,y:118,size:10,bold:true},
-{text:'NIVEL DE RIESGO: '+riskLabel,x:360,y:135,size:13,bold:true,color:riskColor},
-{text:'Puntaje: '+score+' de 100 puntos de riesgo',x:360,y:152,size:9,color:'gray'},
-{text:'QUE ENCONTRAMOS',x:50,y:195,size:13,bold:true},
-{text:'____________________________________________',x:50,y:208,size:9,color:'gray'},
-];
-
-var y=228;
-lines.push({text:'Conexion segura del sitio web (HTTPS):',x:65,y:y,size:10,bold:true});y+=16;
-lines.push({text:sslText,x:65,y:y,size:9,color:sslOk?'green':'red'});y+=28;
-lines.push({text:'Proteccion del correo electronico:',x:65,y:y,size:10,bold:true});y+=16;
-lines.push({text:emailText,x:65,y:y,size:9,color:(spf&&dmarc)?'green':'orange'});y+=28;
-lines.push({text:'Puertas de acceso tecnicas (puertos):',x:65,y:y,size:10,bold:true});y+=16;
-lines.push({text:puertosText,x:65,y:y,size:9,color:peligrosos.length>0?'red':'green'});y+=28;
-lines.push({text:'Datos en filtraciones publicas de Internet:',x:65,y:y,size:10,bold:true});y+=16;
-lines.push({text:brechasText,x:65,y:y,size:9,color:brechas?'red':'green'});y+=28;
-lines.push({text:'Presencia digital adicional:',x:65,y:y,size:10,bold:true});y+=16;
-lines.push({text:subdText,x:65,y:y,size:9,color:'gray'});y+=35;
-lines.push({text:'CONCLUSION',x:50,y:y,size:13,bold:true});y+=18;
-lines.push({text:conclusionText,x:65,y:y,size:10,bold:true,color:conclusionColor});y+=35;
-lines.push({text:'QUE HACER AHORA',x:50,y:y,size:13,bold:true});y+=18;
-recsHumanas.forEach(function(rec,i){lines.push({text:(i+1)+'. '+rec,x:65,y:y,size:9});y+=22;});
-y+=15;
-
-lines.push({text:'MARCO LEGAL - INCUMPLIMIENTOS DETECTADOS',x:50,y:y,size:12,bold:true,color:'red'});y+=18;
-if (leyesIncumplidas.length > 0) {
-lines.push({text:'Las siguientes leyes argentinas aplican a esta organizacion:',x:65,y:y,size:9,color:'gray'});y+=16;
-leyesIncumplidas.forEach(function(l, i) {
-  lines.push({text:(i+1)+'. '+l.ley,x:65,y:y,size:9,bold:true,color:'red'});y+=13;
-  lines.push({text:'   '+l.art,x:65,y:y,size:8,color:'gray'});y+=11;
-  lines.push({text:'   Organismo: '+l.organismo,x:65,y:y,size:8});y+=11;
-  lines.push({text:'   Sancion: '+l.extra,x:65,y:y,size:8,bold:true,color:'orange'});y+=15;
-});
-if (multaMax > 0) {
+  var lines=[
+    {text:'DIAGNOSTICO DE SEGURIDAD DIGITAL',x:50,y:35,size:17,bold:true,color:'gold'},
+    {text:'Preparado por ReconARG para: '+data.domain,x:50,y:60,size:10,color:'white'},
+    {text:'Fecha del analisis: '+fecha,x:50,y:78,size:9,color:'gray'},
+    {text:'Organizacion analizada:',x:65,y:118,size:10,bold:true},
+    {text:data.domain,x:65,y:135,size:16,bold:true},
+    {text:'RESULTADO GENERAL',x:360,y:118,size:10,bold:true},
+    {text:'NIVEL DE RIESGO: '+riskLabel,x:360,y:135,size:13,bold:true,color:riskColor},
+    {text:'Puntaje: '+score+' de 100 puntos de riesgo',x:360,y:152,size:9,color:'gray'},
+    {text:'QUE ENCONTRAMOS',x:50,y:195,size:13,bold:true},
+    {text:'____________________________________________',x:50,y:208,size:9,color:'gray'},
+  ];
+  var y=228;
+  lines.push({text:'Conexion segura del sitio web (HTTPS):',x:65,y:y,size:10,bold:true});y+=16;
+  lines.push({text:sslText,x:65,y:y,size:9,color:sslOk?'green':'red'});y+=28;
+  lines.push({text:'Proteccion del correo electronico:',x:65,y:y,size:10,bold:true});y+=16;
+  lines.push({text:emailText,x:65,y:y,size:9,color:(spf&&dmarc)?'green':'orange'});y+=28;
+  lines.push({text:'Puertas de acceso tecnicas (puertos):',x:65,y:y,size:10,bold:true});y+=16;
+  lines.push({text:puertosText,x:65,y:y,size:9,color:peligrosos.length>0?'red':'green'});y+=28;
+  lines.push({text:'Datos en filtraciones publicas de Internet:',x:65,y:y,size:10,bold:true});y+=16;
+  lines.push({text:brechasText,x:65,y:y,size:9,color:brechas?'red':'green'});y+=28;
+  lines.push({text:'Presencia digital adicional:',x:65,y:y,size:10,bold:true});y+=16;
+  lines.push({text:subdText,x:65,y:y,size:9,color:'gray'});y+=35;
+  lines.push({text:'CONCLUSION',x:50,y:y,size:13,bold:true});y+=18;
+  lines.push({text:conclusionText,x:65,y:y,size:10,bold:true,color:conclusionColor});y+=35;
+  lines.push({text:'QUE HACER AHORA',x:50,y:y,size:13,bold:true});y+=18;
+  recsHumanas.forEach(function(rec,i){lines.push({text:(i+1)+'. '+rec,x:65,y:y,size:9});y+=22;});
+  y+=15;
+  lines.push({text:'MARCO LEGAL - INCUMPLIMIENTOS DETECTADOS',x:50,y:y,size:12,bold:true,color:'red'});y+=18;
+  if (leyesIncumplidas.length > 0) {
+    lines.push({text:'Las siguientes leyes argentinas aplican a esta organizacion:',x:65,y:y,size:9,color:'gray'});y+=16;
+    leyesIncumplidas.forEach(function(l, i) {
+      lines.push({text:(i+1)+'. '+l.ley,x:65,y:y,size:9,bold:true,color:'red'});y+=13;
+      lines.push({text:' '+l.art,x:65,y:y,size:8,color:'gray'});y+=11;
+      lines.push({text:' Organismo: '+l.organismo,x:65,y:y,size:8});y+=11;
+      lines.push({text:' Sancion: '+l.extra,x:65,y:y,size:8,bold:true,color:'orange'});y+=15;
+    });
+    if (multaMax > 0) {
+      y+=5;
+      lines.push({text:'EXPOSICION ECONOMICA TOTAL ESTIMADA:',x:65,y:y,size:10,bold:true});y+=14;
+      lines.push({text:'Minima: USD '+multaMin.toLocaleString()+' | Maxima: USD '+multaMax.toLocaleString(),x:65,y:y,size:11,bold:true,color:'red'});y+=18;
+    }
+  } else {
+    lines.push({text:'Sin incumplimientos criticos detectados. Buena postura de cumplimiento.',x:65,y:y,size:9,color:'green'});y+=18;
+  }
   y+=5;
-  lines.push({text:'EXPOSICION ECONOMICA TOTAL ESTIMADA:',x:65,y:y,size:10,bold:true});y+=14;
-  lines.push({text:'Minima: USD '+multaMin.toLocaleString()+' | Maxima: USD '+multaMax.toLocaleString(),x:65,y:y,size:11,bold:true,color:'red'});y+=18;
+  lines.push({text:'IMPORTANTE: Este diagnostico analiza la superficie publica del sitio.',x:65,y:y,size:8,color:'gray'});y+=11;
+  lines.push({text:'Para certificacion de cumplimiento Ley 25.326 contactar a ReconARG.',x:65,y:y,size:8,color:'gray'});
+  lines.push({text:'Generado por ReconARG - '+new Date().toLocaleDateString('es-AR')+' - Confidencial',x:50,y:800,size:8,color:'gray'});
+  return generatePDF(lines);
 }
-} else {
-lines.push({text:'Sin incumplimientos criticos detectados. Buena postura de cumplimiento.',x:65,y:y,size:9,color:'green'});y+=18;
-}
-
-y+=5;
-lines.push({text:'IMPORTANTE: Este diagnostico analiza la superficie publica del sitio.',x:65,y:y,size:8,color:'gray'});y+=11;
-lines.push({text:'Para certificacion de cumplimiento Ley 25.326 contactar a ReconARG.',x:65,y:y,size:8,color:'gray'});
-lines.push({text:'Generado por ReconARG - '+new Date().toLocaleDateString('es-AR')+' - Confidencial',x:50,y:800,size:8,color:'gray'});
-return generatePDF(lines);
-}
-
 function buildTecnicoPDF(data) {
   var score=calcRiskScore(data);
   var lines=[
@@ -630,7 +569,7 @@ function buildTecnicoPDF(data) {
   lines.push({text:'SSL/TLS',x:50,y:y,size:11,bold:true}); y+=18;
   lines.push({text:'Estado: '+(data.ssl&&data.ssl.valid?'Valido':'Invalido'),x:60,y:y,size:10,color:data.ssl&&data.ssl.valid?'green':'red'}); y+=14;
   lines.push({text:'Emisor: '+((data.ssl&&data.ssl.issuer)||'Desconocido'),x:60,y:y,size:10}); y+=14;
-  lines.push({text:'Vence: '+((data.ssl&&data.ssl.expires)||'N/A')+'  Dias: '+((data.ssl&&data.ssl.days_remaining)||'N/A'),x:60,y:y,size:10}); y+=22;
+  lines.push({text:'Vence: '+((data.ssl&&data.ssl.expires)||'N/A')+' Dias: '+((data.ssl&&data.ssl.days_remaining)||'N/A'),x:60,y:y,size:10}); y+=22;
   lines.push({text:'DNS / EMAIL',x:50,y:y,size:11,bold:true}); y+=18;
   lines.push({text:'SPF: '+(data.dns&&data.dns.spf?'Configurado':'AUSENTE - Riesgo spoofing'),x:60,y:y,size:10,color:data.dns&&data.dns.spf?'green':'red'}); y+=14;
   lines.push({text:'DMARC: '+(data.dns&&data.dns.dmarc?'Configurado':'AUSENTE'),x:60,y:y,size:10,color:data.dns&&data.dns.dmarc?'green':'red'}); y+=14;
@@ -662,36 +601,41 @@ function buildTecnicoPDF(data) {
   return generatePDF(lines);
 }
 
-/* ── Share store (links publicos de reportes) ── */
-var shareStore = {}; // token -> { data, expires }
+var shareStore = {};
 
 function createShareToken(scanData) {
   var token = crypto.randomBytes(16).toString('hex');
-  var expires = Date.now() + 48 * 3600 * 1000; // 48 horas
+  var expires = Date.now() + 48 * 3600 * 1000;
   shareStore[token] = { data: scanData, expires: expires };
-  // Limpiar tokens viejos
   Object.keys(shareStore).forEach(function(t) {
     if (Date.now() > shareStore[t].expires) delete shareStore[t];
   });
   return token;
 }
 
-// Escaneo comparativo (dos dominios en paralelo, sin auth requerida para el render)
-/* ── Express app ── */
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
-// Static files
-var publicDir = process.pkg
-  ? path.join(path.dirname(process.execPath), 'public')
-  : path.join(__dirname, 'public');
-if (process.pkg && !fs.existsSync(publicDir)) publicDir = path.join(__dirname, 'public');
+// Static files - buscar en varias rutas para portabilidad
+var publicDir;
+if (process.pkg) {
+  // En modo exe: primero junto al exe (pendrive), luego en DATA_DIR
+  var dirExe = path.join(path.dirname(process.execPath), 'public');
+  var dirData = path.join(DATA_DIR, 'public');
+  if (fs.existsSync(dirExe)) {
+    publicDir = dirExe;
+  } else if (fs.existsSync(dirData)) {
+    publicDir = dirData;
+  } else {
+    publicDir = dirExe; // fallback
+  }
+} else {
+  publicDir = path.join(__dirname, 'public');
+}
 log('Static: ' + publicDir);
 app.use(express.static(publicDir));
 
-/* ── AUTH ROUTES ── */
-
-// POST /api/auth/login
+// AUTH ROUTES
 app.post('/api/auth/login', function(req, res) {
   var username = (req.body.username || '').trim().toLowerCase();
   var password = req.body.password || '';
@@ -705,30 +649,23 @@ app.post('/api/auth/login', function(req, res) {
   res.json({ token: token, username: user.username, role: user.role });
 });
 
-// POST /api/auth/logout
 app.post('/api/auth/logout', function(req, res) {
   var token = req.headers['x-auth-token'];
   destroySession(token);
   res.json({ ok: true });
 });
 
-// GET /api/auth/me - verificar sesion
 app.get('/api/auth/me', requireAuth, function(req, res) {
   res.json({ username: req.session.username, role: req.session.role });
 });
 
-/* ── USER MANAGEMENT (solo admin) ── */
-
-// GET /api/users - listar usuarios
+// USER MANAGEMENT
 app.get('/api/users', requireAuth, requireAdmin, function(req, res) {
   var users = loadUsers();
-  var safe = users.map(function(u) {
-    return { username: u.username, role: u.role, created: u.created };
-  });
+  var safe = users.map(function(u) { return { username: u.username, role: u.role, created: u.created }; });
   res.json(safe);
 });
 
-// POST /api/users - crear usuario
 app.post('/api/users', requireAuth, requireAdmin, function(req, res) {
   var username = (req.body.username || '').trim().toLowerCase();
   var password = req.body.password || '';
@@ -738,9 +675,7 @@ app.post('/api/users', requireAuth, requireAdmin, function(req, res) {
   if (password.length < 6) return res.status(400).json({ error: 'Contrasena minimo 6 caracteres' });
   if (!/^[a-z0-9_.-]+$/.test(username)) return res.status(400).json({ error: 'Usuario solo puede tener letras, numeros, _ . -' });
   var users = loadUsers();
-  if (users.find(function(u) { return u.username.toLowerCase() === username; })) {
-    return res.status(409).json({ error: 'El usuario ya existe' });
-  }
+  if (users.find(function(u) { return u.username.toLowerCase() === username; })) return res.status(409).json({ error: 'El usuario ya existe' });
   var ph = hashPassword(password);
   var newUser = { username: username, salt: ph.salt, hash: ph.hash, role: role, created: new Date().toISOString().split('T')[0] };
   users.push(newUser);
@@ -749,7 +684,6 @@ app.post('/api/users', requireAuth, requireAdmin, function(req, res) {
   res.json({ ok: true, username: username, role: role });
 });
 
-// DELETE /api/users/:username - eliminar usuario
 app.delete('/api/users/:username', requireAuth, requireAdmin, function(req, res) {
   var target = req.params.username.toLowerCase();
   if (target === 'dantepie1') return res.status(403).json({ error: 'No se puede eliminar el usuario master' });
@@ -762,7 +696,6 @@ app.delete('/api/users/:username', requireAuth, requireAdmin, function(req, res)
   res.json({ ok: true });
 });
 
-// PATCH /api/users/:username/role - cambiar rol
 app.patch('/api/users/:username/role', requireAuth, requireAdmin, function(req, res) {
   var target = req.params.username.toLowerCase();
   if (target === 'dantepie1') return res.status(403).json({ error: 'No se puede cambiar el rol del usuario master' });
@@ -776,13 +709,9 @@ app.patch('/api/users/:username/role', requireAuth, requireAdmin, function(req, 
   res.json({ ok: true, username: target, role: newRole });
 });
 
-// PATCH /api/users/:username/password - cambiar contrasena
 app.patch('/api/users/:username/password', requireAuth, function(req, res) {
   var target = req.params.username.toLowerCase();
-  // Solo admin puede cambiar la de otros; usuario puede cambiar la propia
-  if (target !== req.session.username.toLowerCase() && req.session.role !== 'admin') {
-    return res.status(403).json({ error: 'Sin permisos' });
-  }
+  if (target !== req.session.username.toLowerCase() && req.session.role !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
   if (target === 'dantepie1') return res.status(403).json({ error: 'Contrasena del master no modificable desde la app' });
   var newPwd = req.body.password || '';
   if (newPwd.length < 6) return res.status(400).json({ error: 'Contrasena minimo 6 caracteres' });
@@ -796,8 +725,7 @@ app.patch('/api/users/:username/password', requireAuth, function(req, res) {
   res.json({ ok: true });
 });
 
-/* ── SCAN & PDF (requieren auth) ── */
-
+// SCAN & PDF
 app.get('/api/scan', requireAuth, async function(req, res) {
   var domain = req.query.domain;
   if (!domain) return res.status(400).json({ error: 'domain required' });
@@ -832,22 +760,18 @@ app.post('/api/pdf/tecnico', requireAuth, function(req, res) {
 });
 
 app.get('/api/health', function(req, res) {
-  res.json({ status: 'ok', version: '3.0' });
+  res.json({ status: 'ok', version: '4.0' });
 });
-
-/* ── SHARE & COMPARE ROUTES ── */
-
-// POST /api/share — guarda el scan en memoria y devuelve un token de link publico
+// SHARE & COMPARE
 app.post('/api/share', requireAuth, function(req, res) {
   try {
     var token = createShareToken(req.body);
-    var link = 'http://localhost:' + PORT + '/share/' + token;
+    var link = 'http://localhost:' + currentPort + '/share/' + token;
     log('Share creado por ' + req.session.username + ': ' + req.body.domain + ' token=' + token);
     res.json({ ok: true, token: token, link: link });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// GET /share/:token — pagina publica del reporte (sin auth)
 app.get('/share/:token', function(req, res) {
   var entry = shareStore[req.params.token];
   if (!entry || Date.now() > entry.expires) {
@@ -865,13 +789,12 @@ app.get('/share/:token', function(req, res) {
   var riskColor = score<=30?'#22c55e':score<=60?'#f59e0b':'#ef4444';
   var fecha = new Date(d.timestamp).toLocaleString('es-AR');
   var sslOk = d.ssl && d.ssl.valid && d.ssl.days_remaining > 30;
-  var sslText = sslOk ? 'Conexion segura activa' : (!d.ssl||!d.ssl.valid) ? 'ALERTA: Sin conexion segura' : 'Atencin: SSL vence en '+d.ssl.days_remaining+' dias';
+  var sslText = sslOk ? 'Conexion segura activa' : (!d.ssl||!d.ssl.valid) ? 'ALERTA: Sin conexion segura' : 'Atencion: SSL vence en '+d.ssl.days_remaining+' dias';
   var spf = d.dns && d.dns.spf; var dmarc = d.dns && d.dns.dmarc;
   var emailText = (spf&&dmarc)?'Protegido contra suplantacion':(!spf&&!dmarc)?'ALERTA: Sin proteccion de correo':'Proteccion incompleta';
   var puertos = d.ports && d.ports.ports ? d.ports.ports : [];
   var peligrosos = puertos.filter(function(p){return [21,23,445,3389,6379,27017].includes(p.port);});
   var brechas = d.breaches && d.breaches.count > 0;
-  // Calcular leyes
   var leyes = [];
   if (!d.ssl||!d.ssl.valid||(d.breaches&&d.breaches.count>0)||(d.dns&&(!d.dns.spf||!d.dns.dmarc))) leyes.push({l:'Ley 25.326 - Proteccion de Datos Personales',m:'Multa: USD 1.000 a 100.000'});
   if (d.secHeaders && d.secHeaders.score >= 3) leyes.push({l:'Disposicion 11/2006 DNPDP',m:'Sancion hasta USD 50.000'});
@@ -889,60 +812,72 @@ app.get('/share/:token', function(req, res) {
   html += '<div class="card"><div class="ct">Puertas de Acceso</div><div class="cv '+(peligrosos.length>0?'bad':'ok')+'">'+peligrosos.length+' peligrosa(s)</div><div class="cs">'+(puertos.length)+' puertos detectados</div></div>';
   html += '<div class="card"><div class="ct">Filtraciones de Datos</div><div class="cv '+(brechas?'bad':'ok')+'">'+(brechas?'&#10007; '+d.breaches.count+' filtracion(es)':'&#10003; Sin filtraciones')+'</div><div class="cs">'+(brechas?'Datos circulando en Internet':'Sin registros en HIBP')+'</div></div>';
   html += '</div>';
-  if (leyes.length > 0) {
-    html += '<div class="leyes"><div class="st" style="color:#ef4444">&#9888; Marco Legal - Incumplimientos Detectados</div>';
-    leyes.forEach(function(l){ html += '<div class="ley-item"><div class="ley-nombre">'+l.l+'</div><div class="ley-multa">'+l.m+'</div></div>'; });
-    html += '</div>';
-  }
+  if (leyes.length > 0) { html += '<div class="leyes"><div class="st" style="color:#ef4444">&#9888; Marco Legal - Incumplimientos Detectados</div>'; leyes.forEach(function(l){ html += '<div class="ley-item"><div class="ley-nombre">'+l.l+'</div><div class="ley-multa">'+l.m+'</div></div>'; }); html += '</div>'; }
   if (d.subdomains && d.subdomains.length > 0) { html += '<div class="section"><div class="st">&#127760; Subdominios Encontrados</div><div style="font-size:12px;color:#60a5fa">'+d.subdomains.slice(0,10).join(', ')+'</div></div>'; }
   html += '<div class="footer"><p>Diagnostico generado por <strong style="color:#e8c84a">ReconARG</strong>. Analisis de superficie publica, no reemplaza una auditoria formal.</p><br><p>Para auditoria completa y certificacion de cumplimiento Ley 25.326:</p><a class="cta" href="mailto:contacto@reconarg.com.ar">Contactar a ReconARG</a></div>';
   html += '</div></body></html>';
   res.send(html);
 });
 
-// GET /api/compare — escanea dos dominios en paralelo (requiere auth)
 app.get('/api/compare', requireAuth, async function(req, res) {
-  var d1 = req.query.domain1;
-  var d2 = req.query.domain2;
+  var d1 = req.query.domain1; var d2 = req.query.domain2;
   if (!d1 || !d2) return res.status(400).json({ error: 'domain1 y domain2 requeridos' });
   try {
     var [r1, r2] = await Promise.all([scanDomain(d1), scanDomain(d2)]);
     log('Compare por ' + req.session.username + ': ' + d1 + ' vs ' + d2);
     res.json({ domain1: r1, domain2: r2 });
-  } catch(e) {
-    log('Compare error: ' + e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { log('Compare error: ' + e.message); res.status(500).json({ error: e.message }); }
 });
 
-/* ── Server start ── */
-log('ReconARG Desktop v3 iniciando...');
-var server = app.listen(PORT, '127.0.0.1', function() {
-  log('Servidor en http://localhost:' + PORT);
-  openBrowser('http://localhost:' + PORT);
-});
-
-server.on('error', function(err) {
-  if (err.code === 'EADDRINUSE') {
-    var P2 = PORT + 1;
-    app.listen(P2, '127.0.0.1', function() {
-      log('Puerto alternativo: ' + P2);
-      openBrowser('http://localhost:' + P2);
-    });
-  } else { log('Server error: ' + err.message); }
-});
+// ============================================================
+// SERVER START con cascada de puertos (v4 portability fix)
+// ============================================================
+var currentPort = BASE_PORT;
 
 function openBrowser(url) {
   var p = process.platform;
   if (p === 'win32') {
     exec('cmd /c start "" "' + url + '"', function(err) {
-      if (err) exec('explorer "' + url + '"', function(){});
+      if (err) exec('rundll32 url.dll,FileProtocolHandler ' + url, function(err2) {
+        if (err2) exec('explorer "' + url + '"', function(){});
+      });
     });
   } else if (p === 'darwin') {
     exec('open ' + url, function(){});
   } else {
     exec('xdg-open ' + url, function(err) {
-      if (err) exec('sensible-browser ' + url, function(){});
+      if (err) exec('sensible-browser ' + url, function(err2) {
+        if (err2) exec('firefox ' + url, function(){});
+      });
     });
   }
 }
+
+function tryListen(port, attempt) {
+  attempt = attempt || 0;
+  if (attempt >= 6) {
+    log('ERROR: no se pudo abrir ningun puerto entre ' + BASE_PORT + ' y ' + (BASE_PORT + 5));
+    console.error('ERROR: todos los puertos ' + BASE_PORT + '-' + (BASE_PORT+5) + ' estan ocupados.');
+    return;
+  }
+  var srv = app.listen(port, '127.0.0.1', function() {
+    currentPort = port;
+    log('ReconARG Desktop v4 corriendo en http://localhost:' + port);
+    console.log('ReconARG Desktop v4 - http://localhost:' + port);
+    if (port !== BASE_PORT) console.log('(Puerto ' + BASE_PORT + ' ocupado, usando ' + port + ')');
+    setTimeout(function() { openBrowser('http://localhost:' + port); }, 500);
+  });
+  srv.on('error', function(err) {
+    if (err.code === 'EADDRINUSE') {
+      log('Puerto ' + port + ' ocupado, probando ' + (port+1));
+      tryListen(port + 1, attempt + 1);
+    } else {
+      log('Server error: ' + err.message);
+      console.error('Server error:', err.message);
+    }
+  });
+}
+
+log('ReconARG Desktop v4 iniciando...');
+log('DATA_DIR: ' + DATA_DIR);
+tryListen(BASE_PORT);
