@@ -1,0 +1,48 @@
+ReconARG Diagnostico - Instrucciones de uso
+===========================================
+
+COMO USARLO (3 pasos):
+
+  1) Enchufar el pendrive en la PC del cliente
+  2) Hacer DOBLE CLIC en  RECONARG.bat
+  3) Esperar 5 segundos. Se abre el navegador en
+     http://localhost:3737 con la pantalla de login
+
+-----------------------------------------------------
+SI WINDOWS BLOQUEA EL ARCHIVO:
+-----------------------------------------------------
+
+CASO A - Pantalla azul "Windows protegio tu PC" (SmartScreen):
+   > Clic en "Mas informacion"
+   > Clic en "Ejecutar de todas formas"
+
+CASO B - Error "Windows no tiene acceso al dispositivo":
+   > Clic derecho en RECONARG.bat > Propiedades
+   > Abajo marcar la casilla "Desbloquear"
+   > Aceptar > doble clic de nuevo
+
+CASO C - El antivirus borra el .exe:
+   > Abrir Seguridad de Windows > Proteccion contra virus
+   > Administrar configuracion > Exclusiones > Agregar
+   > Elegir "Carpeta" y seleccionar el pendrive (ej: D:\)
+   > Volver a copiar el .exe desde el respaldo
+
+-----------------------------------------------------
+USUARIOS POR DEFECTO:
+-----------------------------------------------------
+   Admin:   dantepie1 / reconargscaner   (master - no modificable)
+
+Para crear usuarios adicionales: iniciar sesion como admin
+y usar la seccion Gestion de Usuarios.
+
+-----------------------------------------------------
+INFORMACION TECNICA:
+-----------------------------------------------------
+   Puerto: 3737 (si esta ocupado usa automaticamente 3738-3742)
+   Datos:  %LOCALAPPDATA%\ReconARG\
+   Log:    %LOCALAPPDATA%\ReconARG\reconarg-debug.log
+
+Para cerrar el servidor: cerrar la ventana negra del .bat.
+
+-----------------------------------------------------
+ReconARG Cybersecurity - v4.0
